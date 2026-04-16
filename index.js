@@ -168,7 +168,7 @@ function extrairMarcacao(texto) {
 async function chamarGemini(historico, tentativa = 1) {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY nao configurada");
 
-  const url = `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
   try {
     const response = await axios.post(
