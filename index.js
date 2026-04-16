@@ -17,7 +17,7 @@ const { gerarDocumento } = require("./gerador");
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "";
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "meu_token_secreto";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 const PORT = process.env.PORT || 3000;
 
 const app = express();
