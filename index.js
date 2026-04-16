@@ -17,7 +17,7 @@ const { gerarDocumento } = require("./gerador");
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "";
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "meu_token_secreto";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash-001";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 const PORT = process.env.PORT || 3000;
 
 const app = express();
@@ -168,7 +168,7 @@ function extrairMarcacao(texto) {
 async function chamarGemini(historico, tentativa = 1) {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY nao configurada");
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const url = `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
   try {
     const response = await axios.post(
@@ -183,6 +183,8 @@ async function chamarGemini(historico, tentativa = 1) {
     return response.data.candidates[0].content.parts[0].text.trim();
   } catch (err) {
     const status = err.response && err.response.status;
+    const detalhe = err.response && JSON.stringify(err.response.data);
+    console.error(`[GEMINI] Erro ${status} | modelo: ${GEMINI_MODEL} | detalhe: ${detalhe}`);
 
     // 429 = rate limit: aguarda e tenta de novo (ate 3x)
     // O Google reseta o limite a cada 60s, entao espera generosa
