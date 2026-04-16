@@ -185,8 +185,10 @@ async function chamarGemini(historico, tentativa = 1) {
     const status = err.response && err.response.status;
 
     // 429 = rate limit: aguarda e tenta de novo (ate 3x)
+    // O Google reseta o limite a cada 60s, entao espera generosa
     if (status === 429 && tentativa <= 3) {
-      const espera = tentativa * 5000; // 5s, 10s, 15s
+      const esperas = [15000, 30000, 65000]; // 15s, 30s, 65s
+      const espera = esperas[tentativa - 1];
       console.warn(`[GEMINI] 429 rate limit. Tentativa ${tentativa}/3. Aguardando ${espera / 1000}s...`);
       await new Promise((r) => setTimeout(r, espera));
       return chamarGemini(historico, tentativa + 1);
@@ -242,7 +244,7 @@ async function enviarArquivo(recipientId, caminhoArquivo, nomeArquivo) {
 }
 
 // ─── ROTA DE SAUDE ───────────────────────────────────────────
-app.get("/", (_req, res) => res.send("chatleads: servidor ativo"));
+app.get("/", (_req, res) => res.send(`chatleads: servidor ativo | modelo: ${GEMINI_MODEL}`));
 
 // ─── INICIA SERVIDOR ─────────────────────────────────────────
 app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
