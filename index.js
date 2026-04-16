@@ -164,23 +164,36 @@ function extrairMarcacao(texto) {
   }
 }
 
-// ─── CHAMA O GEMINI ───────────────────────────────────────────
-async function chamarGemini(historico) {
+// ─── CHAMA O GEMINI (com retry automatico em caso de 429) ────
+async function chamarGemini(historico, tentativa = 1) {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY nao configurada");
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
-  const response = await axios.post(
-    url,
-    {
-      system_instruction: { parts: [{ text: INSTRUCOES }] },
-      contents: historico,
-      generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
-    },
-    { timeout: 30000 }
-  );
+  try {
+    const response = await axios.post(
+      url,
+      {
+        system_instruction: { parts: [{ text: INSTRUCOES }] },
+        contents: historico,
+        generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
+      },
+      { timeout: 30000 }
+    );
+    return response.data.candidates[0].content.parts[0].text.trim();
+  } catch (err) {
+    const status = err.response && err.response.status;
 
-  return response.data.candidates[0].content.parts[0].text.trim();
+    // 429 = rate limit: aguarda e tenta de novo (ate 3x)
+    if (status === 429 && tentativa <= 3) {
+      const espera = tentativa * 5000; // 5s, 10s, 15s
+      console.warn(`[GEMINI] 429 rate limit. Tentativa ${tentativa}/3. Aguardando ${espera / 1000}s...`);
+      await new Promise((r) => setTimeout(r, espera));
+      return chamarGemini(historico, tentativa + 1);
+    }
+
+    throw err;
+  }
 }
 
 // ─── ENVIA TEXTO PELO MESSENGER ───────────────────────────────
