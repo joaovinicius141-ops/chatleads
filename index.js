@@ -355,7 +355,7 @@ app.get("/aprovar-teste/:paymentId", async (req, res) => {
   const { paymentId } = req.params;
   const secret = req.query.secret;
 
-  if (secret !== VERIFY_TOKEN) {
+  if (secret !== "chatleads_teste_2026") {
     return res.status(403).send("Acesso negado");
   }
 
