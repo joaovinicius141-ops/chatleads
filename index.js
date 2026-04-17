@@ -348,5 +348,49 @@ async function enviarArquivo(recipientId, caminhoArquivo, nomeArquivo) {
 // ─── ROTA DE SAUDE ────────────────────────────────────────────
 app.get("/", (_req, res) => res.send(`chatleads: servidor ativo | modelo: ${GEMINI_MODEL}`));
 
+// ─── ENDPOINT DE TESTE: simula pagamento aprovado ─────────────
+// Uso: /aprovar-teste/ID_DO_PAGAMENTO?secret=VERIFY_TOKEN
+// Remova esta rota antes de ir para producao real.
+app.get("/aprovar-teste/:paymentId", async (req, res) => {
+  const { paymentId } = req.params;
+  const secret = req.query.secret;
+
+  if (secret !== VERIFY_TOKEN) {
+    return res.status(403).send("Acesso negado");
+  }
+
+  const pedido = pagamentosPendentes.get(String(paymentId));
+  if (!pedido) {
+    return res.status(404).send(`Pagamento ${paymentId} nao encontrado. Pendentes: ${[...pagamentosPendentes.keys()].join(", ") || "nenhum"}`);
+  }
+
+  console.log(`[TESTE] Simulando aprovacao do pagamento ${paymentId}`);
+  pagamentosPendentes.delete(String(paymentId));
+
+  res.send(`Aprovado! Gerando documento tipo=${pedido.tipo} para psid=${pedido.psid}...`);
+
+  // Gera e envia o documento
+  try {
+    if (pedido.tipo === "contrato") {
+      await gerarDocumento("contrato", pedido.dados);
+      await enviarTexto(pedido.psid,
+        "Pagamento confirmado! Contrato registrado. " +
+        "Nossa equipe entrega em ate 24h pelo WhatsApp: (00) 00000-0000"
+      );
+      return;
+    }
+
+    const resultado = await gerarDocumento(pedido.tipo, pedido.dados);
+    if (resultado.sucesso) {
+      const enviou = await enviarArquivo(pedido.psid, resultado.caminho, resultado.nomeArquivo);
+      if (enviou) {
+        await enviarTexto(pedido.psid, "Pagamento confirmado e documento gerado! Salva o arquivo aqui. Qualquer duvida e so chamar!");
+      }
+    }
+  } catch (err) {
+    console.error("[TESTE] Erro ao gerar documento:", err.message);
+  }
+});
+
 // ─── INICIA SERVIDOR ──────────────────────────────────────────
 app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
