@@ -8,20 +8,15 @@
 const axios = require("axios");
 
 const MP_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN || "";
+const { SETORES } = require("./setores");
 
-// Preço de cada tipo de documento (em reais)
-const PRECOS = {
-  recibo: 25.00,
-  declaracao: 15.00,
-  contrato: 50.00,
-};
-
-// Descricao que aparece no comprovante do cliente
-const DESCRICOES = {
-  recibo: "Recibo de Pagamento - Crie Seu Contrato",
-  declaracao: "Declaracao de Residencia - Crie Seu Contrato",
-  contrato: "Contrato de Aluguel - Crie Seu Contrato",
-};
+// Monta precos e descricoes dinamicamente a partir de setores.js
+const PRECOS = {};
+const DESCRICOES = {};
+for (const s of SETORES) {
+  PRECOS[s.tipo] = s.preco;
+  DESCRICOES[s.tipo] = `${s.nome} - Crie Seu Contrato`;
+}
 
 // ------------------------------------------------------------
 // Cria uma cobrança PIX no Mercado Pago.

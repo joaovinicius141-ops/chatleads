@@ -1,6 +1,6 @@
 // ============================================================
 // index.js
-// Servidor Express — webhook do Messenger + Gemini + PIX + PDF
+// Servidor Express — triagem por menu + Gemini por setor + PIX + PDF
 // ============================================================
 
 require("dotenv").config();
@@ -11,9 +11,9 @@ const FormData = require("form-data");
 const fs = require("fs");
 const path = require("path");
 
-const { INSTRUCOES } = require("./prompt");
 const { gerarDocumento } = require("./gerador");
-const { criarCobrancaPix, verificarPagamento, PRECOS } = require("./pagamento");
+const { criarCobrancaPix, verificarPagamento } = require("./pagamento");
+const { textoMenu, buscarSetor } = require("./setores");
 
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "";
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "meu_token_secreto";
@@ -22,26 +22,39 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const PORT = process.env.PORT || 3000;
 
 const app = express();
-
-// Diagnostico de variaveis de ambiente (mostra apenas inicio/fim do token)
-const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN || "";
-console.log(`[CONFIG] MERCADOPAGO_ACCESS_TOKEN: ${mpToken ? mpToken.slice(0,15) + "..." + mpToken.slice(-6) : "NAO DEFINIDO"}`);
-console.log(`[CONFIG] PUBLIC_URL: ${process.env.PUBLIC_URL || "NAO DEFINIDO"}`);
-console.log(`[CONFIG] GEMINI_MODEL: ${GEMINI_MODEL}`);
 app.use(express.json());
 
-// Serve os PDFs gerados publicamente
 app.use("/arquivos", express.static(path.join(__dirname, "documentos_gerados")));
 
-// ─── ARMAZENAMENTO EM MEMORIA ─────────────────────────────────
-// Historico de conversa por usuario
-const conversas = {};
+// Diagnostico de variaveis ao iniciar
+const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN || "";
+console.log(`[CONFIG] MERCADOPAGO_ACCESS_TOKEN: ${mpToken ? mpToken.slice(0, 15) + "..." + mpToken.slice(-6) : "NAO DEFINIDO"}`);
+console.log(`[CONFIG] PUBLIC_URL: ${process.env.PUBLIC_URL || "NAO DEFINIDO"}`);
+console.log(`[CONFIG] GEMINI_MODEL: ${GEMINI_MODEL}`);
 
-// Pagamentos aguardando confirmacao:
-// paymentId -> { psid, tipo, dados, timestamp }
+// ─── ESTADO DAS SESSOES ───────────────────────────────────────
+// Guarda o estado de cada usuario (psid):
+// {
+//   estado: "menu" | "atendimento",
+//   setor: objeto do setor escolhido (ou null),
+//   historico: [ { role, parts } ]
+// }
+const sessoes = {};
+
+function getSessao(psid) {
+  if (!sessoes[psid]) {
+    sessoes[psid] = { estado: "menu", setor: null, historico: [] };
+  }
+  return sessoes[psid];
+}
+
+function resetarSessao(psid) {
+  sessoes[psid] = { estado: "menu", setor: null, historico: [] };
+}
+
+// ─── PAGAMENTOS PENDENTES ─────────────────────────────────────
 const pagamentosPendentes = new Map();
 
-// Limpa pagamentos com mais de 35 minutos (expirados)
 setInterval(() => {
   const limite = Date.now() - 35 * 60 * 1000;
   for (const [id, p] of pagamentosPendentes.entries()) {
@@ -50,14 +63,13 @@ setInterval(() => {
       console.log(`[PAGAMENTO] Expirado e removido: id=${id}`);
     }
   }
-}, 5 * 60 * 1000); // roda a cada 5 minutos
+}, 5 * 60 * 1000);
 
 // ─── VERIFICACAO DO WEBHOOK ────────────────────────────────────
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
-
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
     console.log("Webhook verificado com sucesso!");
     return res.status(200).send(challenge);
@@ -69,170 +81,180 @@ app.get("/webhook", (req, res) => {
 app.post("/webhook", async (req, res) => {
   const body = req.body;
   if (body.object !== "page") return res.sendStatus(404);
-
   res.sendStatus(200);
 
   for (const entry of body.entry || []) {
     for (const event of entry.messaging || []) {
       if (!event.message || event.message.is_echo) continue;
-
       const psid = event.sender.id;
       const texto = event.message.text;
       if (!texto) continue;
 
       console.log(`Mensagem de ${psid}: ${texto}`);
-
-      processarMensagem(psid, texto).catch((err) => {
-        console.error("Erro ao processar mensagem:", err.message);
-      });
+      processarMensagem(psid, texto).catch((err) =>
+        console.error("Erro ao processar mensagem:", err.message)
+      );
     }
   }
 });
 
 // ─── WEBHOOK DO MERCADO PAGO ──────────────────────────────────
-// O Mercado Pago avisa aqui quando um pagamento muda de status.
 app.post("/pagamento/webhook", async (req, res) => {
-  // Responde 200 imediatamente para o MP nao reenviar
   res.sendStatus(200);
-
   try {
     const { action, data } = req.body;
     if (!data || !data.id) return;
-
-    // So processa eventos de pagamento aprovado
     if (action !== "payment.updated" && action !== "payment.created") return;
 
     const paymentId = String(data.id);
     console.log(`[PAGAMENTO] Webhook recebido: id=${paymentId} action=${action}`);
 
-    // Verifica o status real com o Mercado Pago
     const { pago, status } = await verificarPagamento(paymentId);
     console.log(`[PAGAMENTO] Status: ${status} | pago=${pago}`);
+    if (!pago) return;
 
-    if (!pago) return; // ainda nao aprovado, aguarda proximo webhook
-
-    // Busca o pedido pendente
     const pedido = pagamentosPendentes.get(paymentId);
     if (!pedido) {
-      console.warn(`[PAGAMENTO] Pagamento aprovado mas pedido nao encontrado: id=${paymentId}`);
+      console.warn(`[PAGAMENTO] Pedido nao encontrado para id=${paymentId}`);
       return;
     }
 
-    // Remove da fila para nao processar duas vezes
     pagamentosPendentes.delete(paymentId);
-
-    console.log(`[PAGAMENTO] Aprovado! Gerando documento tipo=${pedido.tipo} para psid=${pedido.psid}`);
-
-    // Contrato: sem PDF, entrega manual
-    if (pedido.tipo === "contrato") {
-      await gerarDocumento("contrato", pedido.dados);
-      await enviarTexto(
-        pedido.psid,
-        "Pagamento confirmado! Recebemos seu pedido de contrato. " +
-        "Nossa equipe prepara e entrega em ate 24h. " +
-        "Fale com o Pedro pelo WhatsApp: (00) 00000-0000"
-      );
-      return;
-    }
-
-    // Recibo / Declaracao: gera PDF e envia
-    const resultado = await gerarDocumento(pedido.tipo, pedido.dados);
-
-    if (!resultado.sucesso) {
-      await enviarTexto(
-        pedido.psid,
-        "Pagamento recebido! Mas tive um problema para gerar o documento. " +
-        "Fale com o Pedro no WhatsApp: (00) 00000-0000 e ele resolve na hora."
-      );
-      return;
-    }
-
-    const enviou = await enviarArquivo(pedido.psid, resultado.caminho, resultado.nomeArquivo);
-    if (enviou) {
-      await enviarTexto(
-        pedido.psid,
-        "Pagamento confirmado e documento gerado! Salva o arquivo aqui. Qualquer duvida e so chamar!"
-      );
-    } else {
-      await enviarTexto(
-        pedido.psid,
-        "Pagamento recebido! Tive um problema para enviar o arquivo aqui. " +
-        "Fale com o Pedro no WhatsApp: (00) 00000-0000 e ele envia manualmente."
-      );
-    }
+    await entregarDocumento(pedido);
   } catch (erro) {
     console.error("[PAGAMENTO] Erro no webhook:", erro.message);
   }
 });
 
 // ─── FLUXO PRINCIPAL POR MENSAGEM ─────────────────────────────
-async function processarMensagem(psid, mensagem) {
-  if (!conversas[psid]) conversas[psid] = [];
+async function processarMensagem(psid, texto) {
+  const sessao = getSessao(psid);
 
-  conversas[psid].push({ role: "user", parts: [{ text: mensagem }] });
+  // ── Estado: aguardando escolha do menu ──────────────────────
+  if (sessao.estado === "menu") {
+    const setor = buscarSetor(texto.trim());
 
-  if (conversas[psid].length > 20) {
-    conversas[psid] = conversas[psid].slice(-20);
-  }
+    if (!setor) {
+      // Nao reconheceu o numero — exibe o menu novamente
+      await enviarTexto(psid, textoMenu());
+      return;
+    }
 
-  let respostaIA = "";
-  try {
-    respostaIA = await chamarGemini(conversas[psid]);
-  } catch (err) {
-    console.error("Erro Gemini:", err.message);
-    await enviarTexto(psid, "Desculpe, tive um problema para responder. Pode tentar de novo?");
+    // Setor encontrado — inicia o atendimento
+    sessao.estado = "atendimento";
+    sessao.setor = setor;
+    sessao.historico = [];
+
+    console.log(`[TRIAGEM] psid=${psid} escolheu setor: ${setor.nome}`);
+
+    // Primeira mensagem da IA ja com contexto do setor
+    const respostaIA = await chamarGemini(sessao.historico, setor.prompt);
+    sessao.historico.push({ role: "model", parts: [{ text: respostaIA }] });
+    await enviarTexto(psid, respostaIA);
     return;
   }
 
-  // Detecta marcacao [DADOS_COMPLETOS:{...}]
-  const marcacao = extrairMarcacao(respostaIA);
+  // ── Estado: em atendimento com a IA ─────────────────────────
+  if (sessao.estado === "atendimento") {
+    sessao.historico.push({ role: "user", parts: [{ text: texto }] });
 
-  if (marcacao) {
-    console.log(`Marcacao detectada: tipo=${marcacao.tipo}`);
-    conversas[psid].push({ role: "model", parts: [{ text: "[DADOS_COMPLETOS]" }] });
-    delete conversas[psid]; // limpa historico apos coletar dados
+    // Limita historico
+    if (sessao.historico.length > 20) {
+      sessao.historico = sessao.historico.slice(-20);
+    }
 
-    await processarPagamento(psid, marcacao.tipo, marcacao.dados);
-    return;
+    let respostaIA = "";
+    try {
+      respostaIA = await chamarGemini(sessao.historico, sessao.setor.prompt);
+    } catch (err) {
+      console.error("Erro Gemini:", err.message);
+      await enviarTexto(psid, "Desculpe, tive um problema. Pode repetir?");
+      return;
+    }
+
+    const marcacao = extrairMarcacao(respostaIA);
+
+    if (marcacao) {
+      console.log(`Marcacao detectada: tipo=${marcacao.tipo}`);
+      const setorAtual = sessao.setor;
+      resetarSessao(psid); // volta ao menu apos coletar dados
+      await processarPagamento(psid, setorAtual, marcacao.dados);
+      return;
+    }
+
+    sessao.historico.push({ role: "model", parts: [{ text: respostaIA }] });
+    await enviarTexto(psid, respostaIA);
   }
-
-  // Resposta normal
-  conversas[psid].push({ role: "model", parts: [{ text: respostaIA }] });
-  await enviarTexto(psid, respostaIA);
 }
 
-// ─── CRIA COBRANÇA PIX E AGUARDA PAGAMENTO ────────────────────
-async function processarPagamento(psid, tipo, dados) {
-  // Contrato: avisa sobre entrega manual e ja gera o PIX
-  const valor = PRECOS[tipo] || 0;
-
-  // Avisa o cliente que está gerando o PIX
+// ─── GERA PIX E AGUARDA PAGAMENTO ─────────────────────────────
+async function processarPagamento(psid, setor, dados) {
   await enviarTexto(psid, "Perfeito! Gerando o PIX para voce, um segundo...");
 
   try {
-    const cobranca = await criarCobrancaPix(tipo, psid);
+    const cobranca = await criarCobrancaPix(setor.tipo, psid);
 
-    // Guarda o pedido aguardando confirmacao de pagamento
     pagamentosPendentes.set(String(cobranca.id), {
       psid,
-      tipo,
+      tipo: setor.tipo,
       dados,
       timestamp: Date.now(),
     });
 
-    // Envia o codigo PIX copia e cola
     await enviarTexto(
       psid,
-      `Para finalizar, faca o PIX de R$ ${valor.toFixed(2).replace(".", ",")}:\n\n` +
+      `Para finalizar, faca o PIX de R$ ${setor.preco.toFixed(2).replace(".", ",")}:\n\n` +
       `Codigo PIX (copia e cola):\n${cobranca.codigoPix}\n\n` +
-      `Valido por 30 minutos. Assim que o pagamento for confirmado, seu documento chega aqui automaticamente!`
+      `Valido por 30 minutos. Assim que o pagamento for confirmado, ` +
+      `seu documento chega aqui automaticamente!`
     );
-
   } catch (erro) {
     console.error("[PAGAMENTO] Erro ao criar cobranca:", erro.message);
     await enviarTexto(
       psid,
-      "Tive um problema para gerar o PIX. Por favor, fale com o Pedro no WhatsApp: (00) 00000-0000"
+      "Tive um problema para gerar o PIX. Fale com o Pedro no WhatsApp: (00) 00000-0000"
+    );
+  }
+}
+
+// ─── ENTREGA O DOCUMENTO APOS PAGAMENTO CONFIRMADO ───────────
+async function entregarDocumento(pedido) {
+  console.log(`[ENTREGA] tipo=${pedido.tipo} psid=${pedido.psid}`);
+
+  if (pedido.tipo === "contrato") {
+    await gerarDocumento("contrato", pedido.dados);
+    await enviarTexto(
+      pedido.psid,
+      "Pagamento confirmado! Contrato registrado com sucesso.\n" +
+      "Nossa equipe prepara e entrega em ate 24h.\n" +
+      "Fale com o Pedro: (00) 00000-0000"
+    );
+    return;
+  }
+
+  const resultado = await gerarDocumento(pedido.tipo, pedido.dados);
+
+  if (!resultado.sucesso) {
+    await enviarTexto(
+      pedido.psid,
+      "Pagamento recebido! Mas tive um problema ao gerar o documento.\n" +
+      "Fale com o Pedro no WhatsApp: (00) 00000-0000"
+    );
+    return;
+  }
+
+  const enviou = await enviarArquivo(pedido.psid, resultado.caminho, resultado.nomeArquivo);
+  if (enviou) {
+    await enviarTexto(
+      pedido.psid,
+      "Pagamento confirmado e documento gerado! Salva o arquivo aqui.\n" +
+      "Qualquer duvida e so chamar!"
+    );
+  } else {
+    await enviarTexto(
+      pedido.psid,
+      "Pagamento recebido! Tive um problema para enviar o arquivo.\n" +
+      "Fale com o Pedro no WhatsApp: (00) 00000-0000"
     );
   }
 }
@@ -242,20 +264,14 @@ function extrairMarcacao(texto) {
   if (!texto) return null;
   const idx = texto.indexOf("[DADOS_COMPLETOS:");
   if (idx === -1) return null;
-
   const inicio = texto.indexOf("{", idx);
   if (inicio === -1) return null;
-
   let nivel = 0, fim = -1;
   for (let i = inicio; i < texto.length; i++) {
     if (texto[i] === "{") nivel++;
-    else if (texto[i] === "}") {
-      nivel--;
-      if (nivel === 0) { fim = i; break; }
-    }
+    else if (texto[i] === "}") { nivel--; if (nivel === 0) { fim = i; break; } }
   }
   if (fim === -1) return null;
-
   try {
     const obj = JSON.parse(texto.slice(inicio, fim + 1));
     if (!obj.tipo || !obj.dados) return null;
@@ -266,18 +282,23 @@ function extrairMarcacao(texto) {
   }
 }
 
-// ─── CHAMA O GEMINI (com retry em caso de 429) ───────────────
-async function chamarGemini(historico, tentativa = 1) {
+// ─── CHAMA O GEMINI ───────────────────────────────────────────
+async function chamarGemini(historico, promptSetor, tentativa = 1) {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY nao configurada");
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+
+  // Se historico vazio, manda uma mensagem inicial para a IA se apresentar
+  const contents = historico.length > 0
+    ? historico
+    : [{ role: "user", parts: [{ text: "Ola, quero este servico." }] }];
 
   try {
     const response = await axios.post(
       url,
       {
-        system_instruction: { parts: [{ text: INSTRUCOES }] },
-        contents: historico,
+        system_instruction: { parts: [{ text: promptSetor }] },
+        contents,
         generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
       },
       { timeout: 30000 }
@@ -286,16 +307,13 @@ async function chamarGemini(historico, tentativa = 1) {
   } catch (err) {
     const status = err.response && err.response.status;
     const detalhe = err.response && JSON.stringify(err.response.data);
-    console.error(`[GEMINI] Erro ${status} | modelo: ${GEMINI_MODEL} | detalhe: ${detalhe}`);
-
+    console.error(`[GEMINI] Erro ${status} | detalhe: ${detalhe}`);
     if (status === 429 && tentativa <= 3) {
       const esperas = [15000, 30000, 65000];
-      const espera = esperas[tentativa - 1];
-      console.warn(`[GEMINI] 429 rate limit. Tentativa ${tentativa}/3. Aguardando ${espera / 1000}s...`);
-      await new Promise((r) => setTimeout(r, espera));
-      return chamarGemini(historico, tentativa + 1);
+      console.warn(`[GEMINI] Rate limit. Tentativa ${tentativa}/3. Aguardando ${esperas[tentativa - 1] / 1000}s...`);
+      await new Promise((r) => setTimeout(r, esperas[tentativa - 1]));
+      return chamarGemini(historico, promptSetor, tentativa + 1);
     }
-
     throw err;
   }
 }
@@ -318,9 +336,8 @@ async function enviarTexto(recipientId, texto) {
 
 // ─── ENVIA ARQUIVO PDF PELO MESSENGER ─────────────────────────
 async function enviarArquivo(recipientId, caminhoArquivo, nomeArquivo) {
-  if (!PAGE_ACCESS_TOKEN) { console.warn("PAGE_ACCESS_TOKEN nao configurado"); return false; }
+  if (!PAGE_ACCESS_TOKEN) return false;
   if (!fs.existsSync(caminhoArquivo)) { console.error("Arquivo nao encontrado:", caminhoArquivo); return false; }
-
   try {
     const form = new FormData();
     form.append("recipient", JSON.stringify({ id: recipientId }));
@@ -331,7 +348,6 @@ async function enviarArquivo(recipientId, caminhoArquivo, nomeArquivo) {
       filename: nomeArquivo,
       contentType: "application/pdf",
     });
-
     await axios.post(
       `https://graph.facebook.com/v19.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
       form,
@@ -345,52 +361,26 @@ async function enviarArquivo(recipientId, caminhoArquivo, nomeArquivo) {
   }
 }
 
-// ─── ROTA DE SAUDE ────────────────────────────────────────────
-app.get("/", (_req, res) => res.send(`chatleads: servidor ativo | modelo: ${GEMINI_MODEL}`));
-
 // ─── ENDPOINT DE TESTE: simula pagamento aprovado ─────────────
-// Uso: /aprovar-teste/ID_DO_PAGAMENTO?secret=VERIFY_TOKEN
 // Remova esta rota antes de ir para producao real.
 app.get("/aprovar-teste/:paymentId", async (req, res) => {
   const { paymentId } = req.params;
-  const secret = req.query.secret;
-
-  if (secret !== "chatleads_teste_2026") {
-    return res.status(403).send("Acesso negado");
-  }
+  if (req.query.secret !== "chatleads_teste_2026") return res.status(403).send("Acesso negado");
 
   const pedido = pagamentosPendentes.get(String(paymentId));
   if (!pedido) {
-    return res.status(404).send(`Pagamento ${paymentId} nao encontrado. Pendentes: ${[...pagamentosPendentes.keys()].join(", ") || "nenhum"}`);
+    return res.status(404).send(
+      `Pagamento ${paymentId} nao encontrado. Pendentes: ${[...pagamentosPendentes.keys()].join(", ") || "nenhum"}`
+    );
   }
 
-  console.log(`[TESTE] Simulando aprovacao do pagamento ${paymentId}`);
   pagamentosPendentes.delete(String(paymentId));
-
-  res.send(`Aprovado! Gerando documento tipo=${pedido.tipo} para psid=${pedido.psid}...`);
-
-  // Gera e envia o documento
-  try {
-    if (pedido.tipo === "contrato") {
-      await gerarDocumento("contrato", pedido.dados);
-      await enviarTexto(pedido.psid,
-        "Pagamento confirmado! Contrato registrado. " +
-        "Nossa equipe entrega em ate 24h pelo WhatsApp: (00) 00000-0000"
-      );
-      return;
-    }
-
-    const resultado = await gerarDocumento(pedido.tipo, pedido.dados);
-    if (resultado.sucesso) {
-      const enviou = await enviarArquivo(pedido.psid, resultado.caminho, resultado.nomeArquivo);
-      if (enviou) {
-        await enviarTexto(pedido.psid, "Pagamento confirmado e documento gerado! Salva o arquivo aqui. Qualquer duvida e so chamar!");
-      }
-    }
-  } catch (err) {
-    console.error("[TESTE] Erro ao gerar documento:", err.message);
-  }
+  res.send(`Aprovado! Gerando ${pedido.tipo} para psid=${pedido.psid}...`);
+  await entregarDocumento(pedido).catch((e) => console.error("[TESTE]", e.message));
 });
+
+// ─── ROTA DE SAUDE ────────────────────────────────────────────
+app.get("/", (_req, res) => res.send(`chatleads ativo | modelo: ${GEMINI_MODEL}`));
 
 // ─── INICIA SERVIDOR ──────────────────────────────────────────
 app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
