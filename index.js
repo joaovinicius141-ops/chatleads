@@ -91,9 +91,7 @@ app.post("/webhook", async (req, res) => {
       if (!texto) continue;
 
       console.log(`Mensagem de ${psid}: ${texto}`);
-      processarMensagem(psid, texto).catch((err) =>
-        console.error("Erro ao processar mensagem:", err.message)
-      );
+      processarComTimeout(psid, texto);
     }
   }
 });
@@ -125,6 +123,53 @@ app.post("/pagamento/webhook", async (req, res) => {
     console.error("[PAGAMENTO] Erro no webhook:", erro.message);
   }
 });
+
+// ─── WRAPPER COM TIMEOUT E AVISOS AUTOMATICOS ─────────────────
+// - Mais de 5s sem resposta  → envia "Um momento..."
+// - Mais de 60s sem resposta → envia contato do Pedro
+// - Qualquer erro inesperado → envia contato do Pedro
+async function processarComTimeout(psid, texto) {
+  let concluido = false;
+
+  // Aviso de 5 segundos
+  const timer5s = setTimeout(async () => {
+    if (!concluido) {
+      console.log(`[TIMEOUT] 5s sem resposta para ${psid} — enviando aviso`);
+      await enviarTexto(psid, "Um momento, estou processando sua solicitacao...");
+    }
+  }, 5000);
+
+  // Fallback de 60 segundos com contato do Pedro
+  const timer60s = setTimeout(async () => {
+    if (!concluido) {
+      console.warn(`[TIMEOUT] 60s sem resposta para ${psid} — enviando contato do Pedro`);
+      await enviarTexto(
+        psid,
+        "Desculpe a demora! Estamos com uma instabilidade no momento.\n" +
+        "Para atendimento imediato, fale diretamente com o Pedro:\n" +
+        "WhatsApp: (00) 00000-0000"
+      );
+    }
+  }, 60000);
+
+  try {
+    await processarMensagem(psid, texto);
+  } catch (err) {
+    console.error(`[ERRO] psid=${psid} | ${err.message}`);
+    // So avisa o cliente se o aviso de 60s ainda nao foi enviado
+    if (!concluido) {
+      await enviarTexto(
+        psid,
+        "Tive um problema inesperado.\n" +
+        "Para atendimento, fale com o Pedro no WhatsApp: (00) 00000-0000"
+      );
+    }
+  } finally {
+    concluido = true;
+    clearTimeout(timer5s);
+    clearTimeout(timer60s);
+  }
+}
 
 // ─── FLUXO PRINCIPAL POR MENSAGEM ─────────────────────────────
 async function processarMensagem(psid, texto) {
