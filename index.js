@@ -308,9 +308,10 @@ async function chamarGemini(historico, promptSetor, tentativa = 1) {
     const status = err.response && err.response.status;
     const detalhe = err.response && JSON.stringify(err.response.data);
     console.error(`[GEMINI] Erro ${status} | detalhe: ${detalhe}`);
-    if (status === 429 && tentativa <= 3) {
-      const esperas = [15000, 30000, 65000];
-      console.warn(`[GEMINI] Rate limit. Tentativa ${tentativa}/3. Aguardando ${esperas[tentativa - 1] / 1000}s...`);
+    // 429 = rate limit | 503 = sobrecarga temporaria — ambos com retry
+    if ((status === 429 || status === 503) && tentativa <= 3) {
+      const esperas = [5000, 15000, 30000]; // 5s, 15s, 30s
+      console.warn(`[GEMINI] Erro ${status}. Tentativa ${tentativa}/3. Aguardando ${esperas[tentativa - 1] / 1000}s...`);
       await new Promise((r) => setTimeout(r, esperas[tentativa - 1]));
       return chamarGemini(historico, promptSetor, tentativa + 1);
     }
