@@ -22,6 +22,12 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const PORT = process.env.PORT || 3000;
 
 const app = express();
+
+// Diagnostico de variaveis de ambiente (mostra apenas inicio/fim do token)
+const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN || "";
+console.log(`[CONFIG] MERCADOPAGO_ACCESS_TOKEN: ${mpToken ? mpToken.slice(0,15) + "..." + mpToken.slice(-6) : "NAO DEFINIDO"}`);
+console.log(`[CONFIG] PUBLIC_URL: ${process.env.PUBLIC_URL || "NAO DEFINIDO"}`);
+console.log(`[CONFIG] GEMINI_MODEL: ${GEMINI_MODEL}`);
 app.use(express.json());
 
 // Serve os PDFs gerados publicamente
