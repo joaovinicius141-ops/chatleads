@@ -56,10 +56,36 @@ function gerarDeclaracao(dados, caminhoDestino) {
       doc.moveDown(1);
       doc.text(
         "Por ser a express\u00e3o da verdade, firmo a presente declara\u00e7\u00e3o para que produza seus " +
-        "efeitos legais, estando ciente de que a falsidade das informa\u00e7\u00f5es aqui prestadas " +
-        "pode configurar crime de falsidade ideol\u00f3gica (Art. 299 do C\u00f3digo Penal).",
+        "efeitos legais.",
         { align: "justify", lineGap: 3 }
       );
+
+      doc.moveDown(1);
+
+      // ── Aviso legal Art. 299 ────────────────────────────────
+      doc.text(
+        "Declaro ainda, estar ciente de que a falsidade da presente declara\u00e7\u00e3o pode implicar " +
+        "na san\u00e7\u00e3o penal prevista no Art. 299 do C\u00f3digo Penal, conforme transcri\u00e7\u00e3o abaixo:",
+        { align: "justify", lineGap: 3 }
+      );
+
+      doc.moveDown(0.8);
+      doc.font("Helvetica-Oblique").fontSize(11);
+      doc.text(
+        "\u201cArt. 299 \u2013 Omitir, em documento p\u00fablico ou particular, declara\u00e7\u00e3o que nele deveria " +
+        "constar ou nele inserir ou fazer inserir declara\u00e7\u00e3o falsa ou diversa da que deveria ser escrita, " +
+        "com o fim de prejudicar direito, criar obriga\u00e7\u00e3o ou alterar a verdade sobre fato juridicamente " +
+        "relevante.\u201d",
+        { align: "justify", lineGap: 3 }
+      );
+
+      doc.moveDown(0.5);
+      doc.text(
+        "\u201cPena: reclus\u00e3o de 1 (um) a 5 (cinco) anos e multa, se o documento \u00e9 p\u00fablico e " +
+        "reclus\u00e3o de 1 (um) a 3 (tr\u00eas) anos, se o documento \u00e9 particular.\u201d",
+        { align: "justify", lineGap: 3 }
+      );
+      doc.font("Helvetica").fontSize(12);
 
       doc.moveDown(1.5);
       doc.text(
