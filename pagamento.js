@@ -6,6 +6,7 @@
 // ============================================================
 
 const axios = require("axios");
+const crypto = require("crypto");
 
 const MP_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN || "";
 const { SETORES } = require("./setores");
@@ -43,10 +44,16 @@ async function criarCobrancaPix(tipo, psid) {
     },
     // Validade de 30 minutos
     date_of_expiration: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    // Identificador interno para rastrear qual usuario fez o pagamento
-    external_reference: `${psid}_${tipo}_${Date.now()}`,
+    // Identificador interno para rastrear qual usuario fez o pagamento.
+    // Usamos hash do psid para nao vazar o ID do Messenger no Mercado Pago.
+    external_reference: `${crypto.createHash("sha256").update(String(psid)).digest("hex").slice(0, 16)}_${tipo}_${Date.now()}`,
     ...(webhookUrl && { notification_url: webhookUrl }),
   };
+
+  // Idempotency-Key UNICA por tentativa. Se o cliente tentar gerar PIX
+  // duas vezes em sequencia (ex: por retry de rede), geramos cobrancas
+  // distintas — a validade de 30min limita exposicao.
+  const idempotencyKey = crypto.randomUUID();
 
   const response = await axios.post(
     "https://api.mercadopago.com/v1/payments",
@@ -55,7 +62,7 @@ async function criarCobrancaPix(tipo, psid) {
       headers: {
         Authorization: `Bearer ${MP_TOKEN}`,
         "Content-Type": "application/json",
-        "X-Idempotency-Key": `${psid}_${tipo}_${Date.now()}`,
+        "X-Idempotency-Key": idempotencyKey,
       },
       timeout: 15000,
     }

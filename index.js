@@ -10,21 +10,38 @@ const axios = require("axios");
 const FormData = require("form-data");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const { gerarDocumento } = require("./gerador");
 const { criarCobrancaPix, verificarPagamento } = require("./pagamento");
 const { textoMenu, buscarSetor } = require("./setores");
+const { linhaContato } = require("./contato");
 
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN || "";
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "meu_token_secreto";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const FB_APP_SECRET = process.env.FB_APP_SECRET || "";
+const MP_WEBHOOK_SECRET = process.env.MP_WEBHOOK_SECRET || "";
+const TESTE_SECRET = process.env.TESTE_SECRET || "";
+const NODE_ENV = process.env.NODE_ENV || "development";
 const PORT = process.env.PORT || 3000;
 
 const app = express();
-app.use(express.json());
+// body-parser preservando o raw body para validacao de assinatura HMAC
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 
-app.use("/arquivos", express.static(path.join(__dirname, "documentos_gerados")));
+// NOTA DE SEGURANCA:
+// A rota estatica "/arquivos" foi REMOVIDA porque expunha todos os PDFs
+// gerados publicamente. Os documentos sao entregues diretamente via
+// Messenger (form upload). Se precisar de URL publica no futuro, use
+// tokens assinados com expiracao.
 
 // Diagnostico de variaveis ao iniciar
 const mpToken = process.env.MERCADOPAGO_ACCESS_TOKEN || "";
@@ -39,17 +56,48 @@ console.log(`[CONFIG] GEMINI_MODEL: ${GEMINI_MODEL}`);
 //   setor: objeto do setor escolhido (ou null),
 //   historico: [ { role, parts } ]
 // }
-const sessoes = {};
+const sessoes = new Map();
+const MAX_SESSOES = 5000; // limite duro para conter DoS por memoria
+const TTL_SESSAO_MS = 2 * 60 * 60 * 1000; // 2h
 
 function getSessao(psid) {
-  if (!sessoes[psid]) {
-    sessoes[psid] = { estado: "menu", setor: null, historico: [] };
+  let s = sessoes.get(psid);
+  if (!s) {
+    // Se estourou o limite, remove a sessao mais antiga (LRU simples)
+    if (sessoes.size >= MAX_SESSOES) {
+      const maisAntigo = sessoes.keys().next().value;
+      sessoes.delete(maisAntigo);
+      console.warn(`[SESSAO] Limite atingido — removida ${maisAntigo}`);
+    }
+    s = { estado: "menu", setor: null, historico: [], atualizadoEm: Date.now() };
+    sessoes.set(psid, s);
+  } else {
+    s.atualizadoEm = Date.now();
+    // re-inserir para mover para o fim (LRU)
+    sessoes.delete(psid);
+    sessoes.set(psid, s);
   }
-  return sessoes[psid];
+  return s;
 }
 
 function resetarSessao(psid) {
-  sessoes[psid] = { estado: "menu", setor: null, historico: [] };
+  sessoes.set(psid, { estado: "menu", setor: null, historico: [], atualizadoEm: Date.now() });
+}
+
+// Limpa sessoes inativas a cada 15min
+setInterval(() => {
+  const limite = Date.now() - TTL_SESSAO_MS;
+  for (const [psid, s] of sessoes.entries()) {
+    if ((s.atualizadoEm || 0) < limite) sessoes.delete(psid);
+  }
+}, 15 * 60 * 1000);
+
+// Comparacao de strings em tempo constante (evita timing attack)
+function compararSeguro(a, b) {
+  const ba = Buffer.from(String(a || ""));
+  const bb = Buffer.from(String(b || ""));
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
 }
 
 // ─── PAGAMENTOS PENDENTES ─────────────────────────────────────
@@ -70,15 +118,36 @@ app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+  if (mode === "subscribe" && compararSeguro(token, VERIFY_TOKEN)) {
     console.log("Webhook verificado com sucesso!");
     return res.status(200).send(challenge);
   }
   res.sendStatus(403);
 });
 
+// Valida assinatura X-Hub-Signature-256 do Messenger
+function assinaturaMessengerValida(req) {
+  if (!FB_APP_SECRET) {
+    if (NODE_ENV === "production") {
+      console.error("[SEG] FB_APP_SECRET nao configurado em producao!");
+      return false;
+    }
+    return true; // em dev, permite
+  }
+  const assinatura = req.get("x-hub-signature-256") || "";
+  if (!assinatura.startsWith("sha256=") || !req.rawBody) return false;
+  const esperado =
+    "sha256=" +
+    crypto.createHmac("sha256", FB_APP_SECRET).update(req.rawBody).digest("hex");
+  return compararSeguro(assinatura, esperado);
+}
+
 // ─── RECEBE MENSAGENS DO MESSENGER ────────────────────────────
 app.post("/webhook", async (req, res) => {
+  if (!assinaturaMessengerValida(req)) {
+    console.warn("[SEG] Assinatura invalida no /webhook");
+    return res.sendStatus(403);
+  }
   const body = req.body;
   if (body.object !== "page") return res.sendStatus(404);
   res.sendStatus(200);
@@ -96,8 +165,42 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
+// Valida assinatura x-signature do Mercado Pago
+// Doc: https://www.mercadopago.com.br/developers/pt/docs/your-integrations/notifications/webhooks
+function assinaturaMPValida(req) {
+  if (!MP_WEBHOOK_SECRET) {
+    // Se o segredo nao estiver configurado, permite mas loga aviso.
+    // Configure MP_WEBHOOK_SECRET no Railway para ativar a validacao completa.
+    console.warn("[SEG] MP_WEBHOOK_SECRET nao configurado — webhook aceito sem validacao de assinatura");
+    return true;
+  }
+  const xSignature = req.get("x-signature") || "";
+  const xRequestId = req.get("x-request-id") || "";
+  const dataId = (req.body && req.body.data && req.body.data.id) || req.query["data.id"] || "";
+  if (!xSignature || !dataId) return false;
+
+  // x-signature vem no formato "ts=123,v1=hash"
+  const partes = Object.fromEntries(
+    xSignature.split(",").map((p) => p.trim().split("=").map((x) => x.trim()))
+  );
+  const ts = partes.ts;
+  const v1 = partes.v1;
+  if (!ts || !v1) return false;
+
+  const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
+  const esperado = crypto
+    .createHmac("sha256", MP_WEBHOOK_SECRET)
+    .update(manifest)
+    .digest("hex");
+  return compararSeguro(v1, esperado);
+}
+
 // ─── WEBHOOK DO MERCADO PAGO ──────────────────────────────────
 app.post("/pagamento/webhook", async (req, res) => {
+  if (!assinaturaMPValida(req)) {
+    console.warn("[SEG] Assinatura invalida no /pagamento/webhook");
+    return res.sendStatus(403);
+  }
   res.sendStatus(200);
   try {
     const { action, data } = req.body;
@@ -129,26 +232,27 @@ app.post("/pagamento/webhook", async (req, res) => {
 // - Mais de 60s sem resposta → envia contato do Pedro
 // - Qualquer erro inesperado → envia contato do Pedro
 async function processarComTimeout(psid, texto) {
-  let concluido = false;
+  // estado compartilhado entre timers e finally
+  const estado = { concluido: false, fallback60Enviado: false };
 
   // Aviso de 5 segundos
-  const timer5s = setTimeout(async () => {
-    if (!concluido) {
+  const timer5s = setTimeout(() => {
+    if (!estado.concluido) {
       console.log(`[TIMEOUT] 5s sem resposta para ${psid} — enviando aviso`);
-      await enviarTexto(psid, "Um momento, estou processando sua solicitacao...");
+      enviarTexto(psid, "Um momento, estou processando sua solicitacao...").catch(() => {});
     }
   }, 5000);
 
   // Fallback de 60 segundos com contato do Pedro
-  const timer60s = setTimeout(async () => {
-    if (!concluido) {
+  const timer60s = setTimeout(() => {
+    if (!estado.concluido) {
+      estado.fallback60Enviado = true;
       console.warn(`[TIMEOUT] 60s sem resposta para ${psid} — enviando contato do Pedro`);
-      await enviarTexto(
+      enviarTexto(
         psid,
-        "Desculpe a demora! Estamos com uma instabilidade no momento.\n" +
-        "Para atendimento imediato, fale diretamente com o Pedro:\n" +
-        "WhatsApp: (00) 00000-0000"
-      );
+        "Desculpe a demora! Estamos com uma instabilidade no momento.\n\n" +
+          linhaContato()
+      ).catch(() => {});
     }
   }, 60000);
 
@@ -156,16 +260,15 @@ async function processarComTimeout(psid, texto) {
     await processarMensagem(psid, texto);
   } catch (err) {
     console.error(`[ERRO] psid=${psid} | ${err.message}`);
-    // So avisa o cliente se o aviso de 60s ainda nao foi enviado
-    if (!concluido) {
+    // So avisa se o fallback de 60s ainda nao foi disparado (evita mensagem duplicada)
+    if (!estado.fallback60Enviado) {
       await enviarTexto(
         psid,
-        "Tive um problema inesperado.\n" +
-        "Para atendimento, fale com o Pedro no WhatsApp: (00) 00000-0000"
+        "Tive um problema inesperado.\n\n" + linhaContato()
       );
     }
   } finally {
-    concluido = true;
+    estado.concluido = true;
     clearTimeout(timer5s);
     clearTimeout(timer60s);
   }
@@ -201,9 +304,11 @@ async function processarMensagem(psid, texto) {
 
   // ── Estado: em atendimento com a IA ─────────────────────────
   if (sessao.estado === "atendimento") {
-    sessao.historico.push({ role: "user", parts: [{ text: texto }] });
+    // Limite defensivo no tamanho da mensagem do usuario
+    const textoLimpo = String(texto).slice(0, 2000);
+    sessao.historico.push({ role: "user", parts: [{ text: textoLimpo }] });
 
-    // Limita historico
+    // Limita historico (janela de 20 trocas)
     if (sessao.historico.length > 20) {
       sessao.historico = sessao.historico.slice(-20);
     }
@@ -213,6 +318,8 @@ async function processarMensagem(psid, texto) {
       respostaIA = await chamarGemini(sessao.historico, sessao.setor.prompt);
     } catch (err) {
       console.error("Erro Gemini:", err.message);
+      // Remove a ultima msg do user para evitar duplicacao na proxima tentativa
+      sessao.historico.pop();
       await enviarTexto(psid, "Desculpe, tive um problema. Pode repetir?");
       return;
     }
@@ -257,7 +364,7 @@ async function processarPagamento(psid, setor, dados) {
     console.error("[PAGAMENTO] Erro ao criar cobranca:", erro.message);
     await enviarTexto(
       psid,
-      "Tive um problema para gerar o PIX. Fale com o Pedro no WhatsApp: (00) 00000-0000"
+      "Tive um problema para gerar o PIX.\n\n" + linhaContato()
     );
   }
 }
@@ -271,8 +378,8 @@ async function entregarDocumento(pedido) {
     await enviarTexto(
       pedido.psid,
       "Pagamento confirmado! Contrato registrado com sucesso.\n" +
-      "Nossa equipe prepara e entrega em ate 24h.\n" +
-      "Fale com o Pedro: (00) 00000-0000"
+      "Nossa equipe prepara e entrega em ate 24h.\n\n" +
+      linhaContato()
     );
     return;
   }
@@ -282,8 +389,8 @@ async function entregarDocumento(pedido) {
   if (!resultado.sucesso) {
     await enviarTexto(
       pedido.psid,
-      "Pagamento recebido! Mas tive um problema ao gerar o documento.\n" +
-      "Fale com o Pedro no WhatsApp: (00) 00000-0000"
+      "Pagamento recebido! Mas tive um problema ao gerar o documento.\n\n" +
+      linhaContato()
     );
     return;
   }
@@ -298,8 +405,8 @@ async function entregarDocumento(pedido) {
   } else {
     await enviarTexto(
       pedido.psid,
-      "Pagamento recebido! Tive um problema para enviar o arquivo.\n" +
-      "Fale com o Pedro no WhatsApp: (00) 00000-0000"
+      "Pagamento recebido! Tive um problema para enviar o arquivo.\n\n" +
+      linhaContato()
     );
   }
 }
@@ -408,11 +515,16 @@ async function enviarArquivo(recipientId, caminhoArquivo, nomeArquivo) {
 }
 
 // ─── ENDPOINT DE TESTE: simula pagamento aprovado ─────────────
-// Remova esta rota antes de ir para producao real.
+// So funciona se NODE_ENV != "production" E TESTE_SECRET estiver definido.
 app.get("/aprovar-teste/:paymentId", async (req, res) => {
-  const { paymentId } = req.params;
-  if (req.query.secret !== "chatleads_teste_2026") return res.status(403).send("Acesso negado");
+  if (NODE_ENV === "production") {
+    return res.status(404).send("Not found");
+  }
+  if (!TESTE_SECRET || !compararSeguro(req.query.secret, TESTE_SECRET)) {
+    return res.status(403).send("Acesso negado");
+  }
 
+  const { paymentId } = req.params;
   const pedido = pagamentosPendentes.get(String(paymentId));
   if (!pedido) {
     return res.status(404).send(

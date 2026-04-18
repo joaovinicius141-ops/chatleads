@@ -1,0 +1,58 @@
+// ============================================================
+// contato.js
+// Retorna a linha de contato do Pedro respeitando o horario
+// comercial (America/Sao_Paulo, 8h-22h).
+//
+// Fora do horario, o bot NAO passa o numero direto — pede para o
+// cliente mandar uma mensagem no WhatsApp do Pedro que sera
+// respondida assim que ele estiver disponivel.
+//
+// Config via .env:
+//   WHATSAPP_PEDRO   — numero do Pedro (ex: "(11) 99999-0000")
+//   HORARIO_INICIO   — hora de inicio (default 8)
+//   HORARIO_FIM      — hora de fim   (default 22)
+//   TIMEZONE         — default "America/Sao_Paulo"
+// ============================================================
+
+const WHATSAPP_PEDRO = process.env.WHATSAPP_PEDRO || "(00) 00000-0000";
+const HORARIO_INICIO = Number(process.env.HORARIO_INICIO || 8);
+const HORARIO_FIM = Number(process.env.HORARIO_FIM || 22);
+const TIMEZONE = process.env.TIMEZONE || "America/Sao_Paulo";
+
+// Retorna a hora atual (0-23) no fuso configurado.
+function horaAtualBR() {
+  try {
+    const hora = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: TIMEZONE,
+      hour: "2-digit",
+      hour12: false,
+    }).format(new Date());
+    // Em algumas runtimes, "24" aparece no lugar de "00"
+    const n = Number(hora);
+    return n === 24 ? 0 : n;
+  } catch (_e) {
+    // Fallback: hora local do servidor
+    return new Date().getHours();
+  }
+}
+
+function dentroDoHorario() {
+  const h = horaAtualBR();
+  return h >= HORARIO_INICIO && h < HORARIO_FIM;
+}
+
+// Linha que vai embaixo de qualquer mensagem de fallback.
+// Dentro do horario: passa o numero direto.
+// Fora do horario: orienta a mandar mensagem para ser respondido depois.
+function linhaContato() {
+  if (dentroDoHorario()) {
+    return `Fale com o Pedro no WhatsApp: ${WHATSAPP_PEDRO}`;
+  }
+  return (
+    `Nosso atendimento humano funciona das ${HORARIO_INICIO}h as ${HORARIO_FIM}h.\n` +
+    `Voce pode mandar uma mensagem no WhatsApp do Pedro (${WHATSAPP_PEDRO}) ` +
+    `que ele responde assim que estiver disponivel.`
+  );
+}
+
+module.exports = { linhaContato, dentroDoHorario, horaAtualBR };
