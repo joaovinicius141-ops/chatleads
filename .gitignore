@@ -2,3 +2,5 @@ node_modules/
 .env
 documentos_gerados/
 relatorios/
+logs/
+.claude/
