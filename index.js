@@ -557,6 +557,41 @@ function extrairMarcacao(texto) {
   }
 }
 
+// ─── RASTREAMENTO DE USO DO GEMINI ────────────────────────────
+// Preco Gemini 2.5 Flash (USD por 1M tokens)
+const GEMINI_PRECO_ENTRADA = 0.075;  // input
+const GEMINI_PRECO_SAIDA   = 0.300;  // output
+const GEMINI_USO_PATH = path.join(__dirname, "relatorios", "gemini_uso.json");
+
+function registrarUsoGemini(inputTokens, outputTokens) {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const custoUsd =
+      (inputTokens  / 1_000_000) * GEMINI_PRECO_ENTRADA +
+      (outputTokens / 1_000_000) * GEMINI_PRECO_SAIDA;
+
+    let dados = { total_chamadas: 0, total_tokens_entrada: 0, total_tokens_saida: 0, custo_estimado_usd: 0, por_dia: {} };
+    if (require("fs").existsSync(GEMINI_USO_PATH)) {
+      try { dados = JSON.parse(require("fs").readFileSync(GEMINI_USO_PATH, "utf8")); } catch (_) {}
+    }
+
+    dados.total_chamadas++;
+    dados.total_tokens_entrada += inputTokens;
+    dados.total_tokens_saida   += outputTokens;
+    dados.custo_estimado_usd    = parseFloat((dados.custo_estimado_usd + custoUsd).toFixed(6));
+
+    if (!dados.por_dia[hoje]) dados.por_dia[hoje] = { chamadas: 0, tokens_entrada: 0, tokens_saida: 0, custo_usd: 0 };
+    dados.por_dia[hoje].chamadas++;
+    dados.por_dia[hoje].tokens_entrada += inputTokens;
+    dados.por_dia[hoje].tokens_saida   += outputTokens;
+    dados.por_dia[hoje].custo_usd       = parseFloat((dados.por_dia[hoje].custo_usd + custoUsd).toFixed(6));
+
+    require("fs").writeFileSync(GEMINI_USO_PATH, JSON.stringify(dados, null, 2), "utf8");
+  } catch (e) {
+    console.error("[GEMINI] Falha ao registrar uso:", e.message);
+  }
+}
+
 // ─── CHAMA O GEMINI ───────────────────────────────────────────
 async function chamarGemini(historico, promptSetor, tentativa = 1) {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY nao configurada");
@@ -577,6 +612,13 @@ async function chamarGemini(historico, promptSetor, tentativa = 1) {
       },
       { timeout: 30000 }
     );
+
+    // Registra consumo de tokens para calculo de custo
+    const uso = response.data.usageMetadata;
+    if (uso) {
+      registrarUsoGemini(uso.promptTokenCount || 0, uso.candidatesTokenCount || 0);
+    }
+
     return response.data.candidates[0].content.parts[0].text.trim();
   } catch (err) {
     const status = err.response && err.response.status;

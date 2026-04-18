@@ -192,6 +192,20 @@ function registrar(app, ADMIN_SECRET) {
     res.json(resultado);
   });
 
+  // Uso e custo estimado do Gemini
+  app.get("/admin/gemini", auth, (_req, res) => {
+    const arquivo = path.join(PASTA_RELATORIOS, "gemini_uso.json");
+    if (!fs.existsSync(arquivo)) {
+      return res.json({ total_chamadas: 0, total_tokens_entrada: 0, total_tokens_saida: 0, custo_estimado_usd: 0, por_dia: {} });
+    }
+    try {
+      const dados = JSON.parse(fs.readFileSync(arquivo, "utf8"));
+      res.json(dados);
+    } catch (e) {
+      res.status(500).json({ erro: "Falha ao ler gemini_uso.json" });
+    }
+  });
+
   console.log("[ADMIN] Endpoints registrados em /admin/*");
 }
 
