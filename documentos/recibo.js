@@ -94,6 +94,21 @@ function dataPorExtenso(iso) {
   return `${parseInt(p[2], 10)} de ${MESES[parseInt(p[1], 10) - 1] || ""} de ${p[0]}`;
 }
 
+// ── Rodape legal em 8pt cinza (posicionado absolutamente no fim da pagina) ──
+function adicionarRodape(doc) {
+  const texto =
+    "AVISO LEGAL: Este documento foi gerado automaticamente pela plataforma Crie Seu Contrato " +
+    "com base nas informacoes fornecidas pelo usuario. O servico limita-se a automacao de redacao, " +
+    "nao constituindo assessoria ou consultoria juridica. A veracidade e a conferencia dos dados " +
+    "sao de inteira responsabilidade do declarante/contratante.";
+  const yRodape = doc.page.height - 35;
+  doc.save()
+    .fontSize(8)
+    .fillColor("#888888")
+    .text(texto, 70, yRodape, { width: doc.page.width - 140, align: "center" })
+    .restore();
+}
+
 // ------------------------------------------------------------
 // Gera o PDF do recibo
 // ------------------------------------------------------------
@@ -165,6 +180,9 @@ function gerarRecibo(dados, caminhoDestino) {
       // ── Linha inferior ──────────────────────────────────────
       doc.moveDown(1);
       doc.moveTo(70, doc.y).lineTo(70 + larguraUtil, doc.y).stroke();
+
+      // ── Rodape legal (8pt, cinza) ───────────────────────────
+      adicionarRodape(doc);
 
       doc.end();
       stream.on("finish", () => resolve(caminhoDestino));

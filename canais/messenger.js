@@ -2,7 +2,7 @@
 // canais/messenger.js
 // Implementacao do canal Facebook Messenger.
 // Exporta o contrato padrao usado em todos os canais:
-//   { nome, enviarTexto, enviarArquivo, registrarWebhook }
+//   { nome, enviarTexto, enviarArquivo, enviarQuickReply, registrarWebhook }
 // ============================================================
 
 const axios = require("axios");
@@ -47,6 +47,38 @@ async function enviarTexto(userId, texto) {
     return true;
   } catch (err) {
     console.error("[MESSENGER] enviarTexto:", err.response ? JSON.stringify(err.response.data) : err.message);
+    return false;
+  }
+}
+
+// Envia mensagem com botoes de resposta rapida (Quick Reply)
+// opcoes: [{ titulo: "Aceito e Continuar", payload: "LGPD_ACEITO" }]
+async function enviarQuickReply(userId, texto, opcoes) {
+  if (!PAGE_ACCESS_TOKEN) return false;
+  try {
+    await axios.post(
+      "https://graph.facebook.com/v19.0/me/messages",
+      {
+        recipient: { id: userId },
+        message: {
+          text: texto,
+          quick_replies: opcoes.map((o) => ({
+            content_type: "text",
+            title: o.titulo,
+            payload: o.payload,
+          })),
+        },
+      },
+      {
+        params: { access_token: PAGE_ACCESS_TOKEN },
+        timeout: 15000,
+        httpAgent,
+        httpsAgent,
+      }
+    );
+    return true;
+  } catch (err) {
+    console.error("[MESSENGER] enviarQuickReply:", err.response ? JSON.stringify(err.response.data) : err.message);
     return false;
   }
 }
@@ -131,6 +163,19 @@ function registrarWebhook(app, onMensagem) {
       for (const event of entry.messaging || []) {
         if (!event.message || event.message.is_echo) continue;
         const userId = event.sender.id;
+
+        // ── Bloqueio de midia (LGPD / seguranca) ──────────────
+        // Ignora fotos, arquivos e audios — so aceita texto digitado.
+        if (event.message.attachments && event.message.attachments.length > 0) {
+          console.log(`[MESSENGER] Anexo bloqueado de ${userId}: tipo=${event.message.attachments[0].type}`);
+          enviarTexto(
+            userId,
+            "Por questoes de seguranca e protecao de dados, nao aceitamos fotos ou arquivos. " +
+            "Por favor, digite as informacoes diretamente no chat."
+          ).catch(() => {});
+          continue;
+        }
+
         const texto = event.message.text;
         if (!texto) continue;
         console.log(`[MESSENGER] Mensagem de ${userId}: ${texto}`);
@@ -144,5 +189,6 @@ module.exports = {
   nome: "messenger",
   enviarTexto,
   enviarArquivo,
+  enviarQuickReply,
   registrarWebhook,
 };

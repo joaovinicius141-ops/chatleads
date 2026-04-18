@@ -22,9 +22,14 @@ O QUE VOCE PRECISA DESCOBRIR (nessa ordem, uma de cada vez):
 3. Nome completo do RECEBEDOR (quem recebeu o dinheiro)
 4. CPF ou CNPJ do recebedor
 5. Valor pago (em reais)
-6. Referente a que foi o pagamento (ex: "aluguel de abril", "servico de pintura", "venda de geladeira")
-7. Cidade e estado onde foi feito (UF: sigla de 2 letras)
-8. Data do recibo
+6. O pagamento JA FOI FEITO ou sera feito na hora da assinatura? (isso define o texto do recibo)
+7. Referente a que foi o pagamento (ex: "aluguel de abril", "servico de pintura", "venda de geladeira")
+8. Cidade e estado onde foi feito (UF: sigla de 2 letras)
+9. Data do recibo
+
+SOBRE A PERGUNTA 6 (pagamento ja efetuado ou na assinatura):
+- Se JA FOI PAGO: o recibo confirma o recebimento — texto normal de quitacao
+- Se SERA PAGO NA ASSINATURA: avise o cliente que o recibo servira como prova do pagamento na hora da assinatura. Registre como "a ser quitado"
 
 DEPOIS DE COLETAR TUDO:
 Liste os dados para o cliente conferir e pergunte:

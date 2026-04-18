@@ -75,7 +75,8 @@ function getSessao(canal, userId) {
       sessoes.delete(maisAntigo);
       console.warn(`[SESSAO] Limite atingido — removida ${maisAntigo}`);
     }
-    s = { estado: "menu", setor: null, historico: [], atualizadoEm: Date.now() };
+    // Nova sessao comeca no fluxo de consentimento LGPD
+    s = { estado: "lgpd", setor: null, historico: [], atualizadoEm: Date.now() };
     sessoes.set(chave, s);
   } else {
     s.atualizadoEm = Date.now();
@@ -232,6 +233,34 @@ async function processarComTimeout(userId, texto, canal) {
 async function processarMensagem(userId, texto, canal) {
   const sessao = getSessao(canal, userId);
 
+  // ── Estado: aguardando exibir tela de consentimento LGPD ────
+  if (sessao.estado === "lgpd") {
+    sessao.estado = "lgpd_aguardando";
+    const msgLgpd =
+      "Ola! Para gerarmos seu documento, precisamos coletar alguns dados pessoais. " +
+      "Ao continuar, voce declara estar de acordo com nossos Termos de Uso e autoriza " +
+      "o tratamento dos dados apenas para esta finalidade. " +
+      "Seus dados e o PDF serao excluidos permanentemente em 30 dias.";
+
+    // Usa Quick Reply se o canal suportar, senso envia texto simples
+    if (typeof canal.enviarQuickReply === "function") {
+      await canal.enviarQuickReply(userId, msgLgpd, [
+        { titulo: "Aceito e Continuar", payload: "LGPD_ACEITO" },
+      ]);
+    } else {
+      await canal.enviarTexto(userId, msgLgpd + '\n\nDigite "aceito" para continuar.');
+    }
+    return;
+  }
+
+  // ── Estado: aguardando resposta do consentimento LGPD ───────
+  if (sessao.estado === "lgpd_aguardando") {
+    console.log(`[LGPD] Aceite registrado: ${canal.nome}:${userId} em ${new Date().toISOString()}`);
+    sessao.estado = "menu";
+    await canal.enviarTexto(userId, textoMenu());
+    return;
+  }
+
   if (sessao.estado === "menu") {
     const setor = buscarSetor(texto.trim());
     if (!setor) {
@@ -326,7 +355,7 @@ async function entregarDocumento(pedido) {
     await canal.enviarTexto(
       pedido.userId,
       "Pagamento confirmado! Contrato registrado com sucesso.\n" +
-      "Nossa equipe prepara e entrega em ate 24h.\n\n" +
+      "Este documento e personalizado e sera entregue em ate 24h uteis apos o pagamento.\n\n" +
       linhaContato()
     );
     return;
@@ -346,10 +375,18 @@ async function entregarDocumento(pedido) {
   if (enviou) {
     await canal.enviarTexto(
       pedido.userId,
-      "Pagamento confirmado e documento gerado! Salva o arquivo aqui.\n" +
+      "Aqui esta seu documento! \u2705\n\n" +
+      "Importante: por seguranca, este arquivo estara disponivel por 30 dias. " +
+      "Salve o PDF no seu dispositivo agora mesmo!\n\n" +
       "Qualquer duvida e so chamar!"
     );
   } else {
+    // Log critico — pagamento confirmado mas entrega falhou
+    console.error(
+      `[CRITICO] FALHA NA ENTREGA POS-PIX | tipo=${pedido.tipo} | ` +
+      `${canal.nome}:${pedido.userId} | arquivo=${resultado.nomeArquivo} | ` +
+      `caminho=${resultado.caminho} | ts=${new Date().toISOString()}`
+    );
     await canal.enviarTexto(
       pedido.userId,
       "Pagamento recebido! Tive um problema para enviar o arquivo.\n\n" + linhaContato()
