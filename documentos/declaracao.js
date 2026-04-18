@@ -8,25 +8,39 @@ const fs = require("fs");
 const PDFDocument = require("pdfkit");
 const { dataPorExtenso } = require("./recibo");
 
-// ── Rodape legal em 8pt cinza (posicionado absolutamente no fim da pagina) ──
+// ── Rodape legal em 8pt cinza na ultima pagina ─────────────────
+// Requer bufferPages:true no construtor do PDFDocument.
+// Usa switchToPage + margem temporaria zero para nao criar pagina extra.
 function adicionarRodape(doc) {
+  const range = doc.bufferedPageRange();
+  const ultimaPagina = range.start + range.count - 1;
+  doc.switchToPage(ultimaPagina);
+
   const texto =
     "AVISO LEGAL: Este documento foi gerado automaticamente pela plataforma Crie Seu Contrato " +
     "com base nas informacoes fornecidas pelo usuario. O servico limita-se a automacao de redacao, " +
     "nao constituindo assessoria ou consultoria juridica. A veracidade e a conferencia dos dados " +
     "sao de inteira responsabilidade do declarante/contratante.";
-  const yRodape = doc.page.height - 35;
-  doc.save()
-    .fontSize(8)
-    .fillColor("#888888")
-    .text(texto, 70, yRodape, { width: doc.page.width - 140, align: "center" })
-    .restore();
+
+  const margemOriginal = doc.page.margins.bottom;
+  doc.page.margins.bottom = 0;
+
+  doc.fontSize(8)
+     .fillColor("#888888")
+     .text(texto, 70, doc.page.height - 30, {
+       width: doc.page.width - 140,
+       align: "center",
+       lineBreak: true,
+     });
+
+  doc.page.margins.bottom = margemOriginal;
+  doc.fillColor("#000000").fontSize(12); // restaura cor e fonte
 }
 
 function gerarDeclaracao(dados, caminhoDestino) {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({ size: "A4", margin: 70 });
+      const doc = new PDFDocument({ size: "A4", margin: 70, bufferPages: true });
       const stream = fs.createWriteStream(caminhoDestino);
       doc.pipe(stream);
 

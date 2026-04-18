@@ -261,6 +261,16 @@ async function processarMensagem(userId, texto, canal) {
     return;
   }
 
+  // ── Estado: aguardando feedback pos-entrega ──────────────────
+  // Cliente recebeu o documento e enviou uma mensagem de insatisfacao ou duvida.
+  // Gemini analisa os dados usados e decide se ha erro real ou nao.
+  if (sessao.estado === "pos_entrega") {
+    const entrega = sessao.dadosEntregues;
+    resetarSessao(canal, userId); // reseta antes de processar (evita loop)
+    await revisarDocumento(userId, texto, entrega, canal);
+    return;
+  }
+
   if (sessao.estado === "menu") {
     const setor = buscarSetor(texto.trim());
     if (!setor) {
@@ -378,8 +388,12 @@ async function entregarDocumento(pedido) {
       "Aqui esta seu documento! \u2705\n\n" +
       "Importante: por seguranca, este arquivo estara disponivel por 30 dias. " +
       "Salve o PDF no seu dispositivo agora mesmo!\n\n" +
-      "Qualquer duvida e so chamar!"
+      "Caso tenha alguma duvida ou algo nao esteja certo, e so me dizer aqui!"
     );
+    // Ativa estado pos_entrega para capturar feedback do cliente
+    const sessao = getSessao(canal, pedido.userId);
+    sessao.estado = "pos_entrega";
+    sessao.dadosEntregues = { tipo: pedido.tipo, dados: pedido.dados };
   } else {
     // Log critico — pagamento confirmado mas entrega falhou
     console.error(
@@ -390,6 +404,57 @@ async function entregarDocumento(pedido) {
     await canal.enviarTexto(
       pedido.userId,
       "Pagamento recebido! Tive um problema para enviar o arquivo.\n\n" + linhaContato()
+    );
+  }
+}
+
+// ─── REVISAO POS-ENTREGA ──────────────────────────────────────
+// Gemini analisa os dados do documento vs. reclamacao do cliente.
+// Responde com [ERRO_ENCONTRADO] ou [SEM_ERRO] + explicacao.
+async function revisarDocumento(userId, reclamacao, entrega, canal) {
+  console.log(`[REVISAO] Iniciando revisao pos-entrega: tipo=${entrega.tipo} ${canal.nome}:${userId}`);
+
+  const promptRevisao =
+    `Voce e um revisor de documentos da Crie Seu Contrato.\n` +
+    `Um cliente recebeu um documento do tipo "${entrega.tipo}" e reportou um problema ou insatisfacao.\n\n` +
+    `DADOS USADOS PARA GERAR O DOCUMENTO:\n${JSON.stringify(entrega.dados, null, 2)}\n\n` +
+    `MENSAGEM DO CLIENTE:\n"${String(reclamacao).slice(0, 1000)}"\n\n` +
+    `SUA TAREFA:\n` +
+    `1. Analise os dados do documento com atencao\n` +
+    `2. Verifique se ha erros evidentes, dados incorretos ou inconsistencias nos dados\n` +
+    `3. Considere a reclamacao do cliente em relacao ao que foi gerado\n\n` +
+    `FORMATO DE RESPOSTA OBRIGATORIO:\n` +
+    `- Se encontrar erro real nos dados: comece com [ERRO_ENCONTRADO] e descreva brevemente o problema\n` +
+    `- Se nao encontrar erro: comece com [SEM_ERRO] e explique de forma simples e empatica ` +
+    `para o cliente o que foi gerado e por que os dados parecem corretos\n` +
+    `Seja humano, breve e claro. Nao repita os dados tecnicos ao cliente.`;
+
+  try {
+    const resposta = await chamarGemini(
+      [{ role: "user", parts: [{ text: promptRevisao }] }],
+      "Voce e um revisor tecnico de documentos. Analise com rigor e responda no formato solicitado."
+    );
+
+    if (resposta.includes("[ERRO_ENCONTRADO]")) {
+      const detalhe = resposta.replace(/\[ERRO_ENCONTRADO\]/g, "").trim();
+      console.warn(`[REVISAO] Erro encontrado no documento de ${canal.nome}:${userId} — ${detalhe}`);
+      await canal.enviarTexto(
+        userId,
+        `Identificamos um possivel problema no seu documento.\n\n${detalhe}\n\n` +
+        `Entre em contato com nossa equipe para corrigirmos sem custo adicional:\n\n` +
+        linhaContato()
+      );
+    } else {
+      const explicacao = resposta.replace(/\[SEM_ERRO\]/g, "").trim();
+      console.log(`[REVISAO] Sem erros encontrados para ${canal.nome}:${userId}`);
+      await canal.enviarTexto(userId, explicacao);
+    }
+  } catch (err) {
+    console.error("[REVISAO] Erro ao chamar Gemini:", err.message);
+    await canal.enviarTexto(
+      userId,
+      "Nao consegui revisar seu documento agora. Por favor, fale diretamente com nossa equipe:\n\n" +
+      linhaContato()
     );
   }
 }
