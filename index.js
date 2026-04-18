@@ -19,6 +19,7 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const crypto = require("crypto");
+const path = require("path");
 
 const { gerarDocumento } = require("./gerador");
 const { criarCobrancaPix, verificarPagamento } = require("./pagamento");
@@ -434,6 +435,13 @@ app.get("/aprovar-teste/:paymentId", async (req, res) => {
 
 // ─── ENDPOINTS ADMINISTRATIVOS ────────────────────────────────
 admin.registrar(app, ADMIN_SECRET);
+
+// ─── PAINEL VISUAL (dashboard.html) ───────────────────────────
+app.get("/admin/painel", (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send("ADMIN_SECRET nao configurado");
+  if (!compararSeguro(req.query.secret, ADMIN_SECRET)) return res.status(403).send("Acesso negado");
+  res.sendFile(path.join(__dirname, "dashboard.html"));
+});
 
 // ─── ROTINA DE LIMPEZA (30 DIAS) ──────────────────────────────
 limpeza.iniciarAgendamento();

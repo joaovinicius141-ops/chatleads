@@ -126,6 +126,72 @@ function registrar(app, ADMIN_SECRET) {
     res.json(stats);
   });
 
+  // Dashboard completo: dados agregados para o painel visual
+  const PRECO_POR_TIPO = { declaracao: 15, recibo: 25, contrato: 50 };
+
+  app.get("/admin/dashboard", auth, (_req, res) => {
+    const csv = path.join(PASTA_RELATORIOS, "relatorio_geral.csv");
+
+    const resultado = {
+      total_vendas: 0,
+      faturamento_total: 0,
+      ticket_medio: 0,
+      ultimos_7dias: { vendas: 0, faturamento: 0 },
+      por_tipo: {},       // { recibo: { vendas, faturamento } }
+      por_dia: {},        // { "2026-04-17": { vendas, faturamento } }
+      clientes_unicos: 0,
+    };
+
+    if (!fs.existsSync(csv)) return res.json(resultado);
+
+    const linhas = fs.readFileSync(csv, "utf8").split("\n").slice(1);
+    const agora = Date.now();
+    const seteDiasAtras = agora - 7 * 24 * 60 * 60 * 1000;
+    const trintaDiasAtras = agora - 30 * 24 * 60 * 60 * 1000;
+    const clientesSet = new Set();
+
+    for (const linha of linhas) {
+      if (!linha.trim()) continue;
+      const cols = linha.match(/"([^"]*)"/g) || [];
+      if (cols.length < 5) continue;
+      const [data, , tipo, cliente, status] = cols.map((c) => c.slice(1, -1));
+      if (status !== "gerado") continue;
+
+      const preco = PRECO_POR_TIPO[tipo] || 0;
+      const [y, m, d] = data.split("-").map(Number);
+      const ts = new Date(y, m - 1, d).getTime();
+
+      resultado.total_vendas++;
+      resultado.faturamento_total += preco;
+      if (cliente) clientesSet.add(cliente.toLowerCase().trim());
+
+      // Por tipo
+      if (!resultado.por_tipo[tipo]) resultado.por_tipo[tipo] = { vendas: 0, faturamento: 0 };
+      resultado.por_tipo[tipo].vendas++;
+      resultado.por_tipo[tipo].faturamento += preco;
+
+      // Ultimos 7 dias
+      if (ts >= seteDiasAtras) {
+        resultado.ultimos_7dias.vendas++;
+        resultado.ultimos_7dias.faturamento += preco;
+      }
+
+      // Por dia (ultimos 30 dias)
+      if (ts >= trintaDiasAtras) {
+        if (!resultado.por_dia[data]) resultado.por_dia[data] = { vendas: 0, faturamento: 0 };
+        resultado.por_dia[data].vendas++;
+        resultado.por_dia[data].faturamento += preco;
+      }
+    }
+
+    resultado.ticket_medio = resultado.total_vendas > 0
+      ? parseFloat((resultado.faturamento_total / resultado.total_vendas).toFixed(2))
+      : 0;
+    resultado.clientes_unicos = clientesSet.size;
+
+    res.json(resultado);
+  });
+
   console.log("[ADMIN] Endpoints registrados em /admin/*");
 }
 
