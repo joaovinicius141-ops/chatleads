@@ -308,9 +308,16 @@ async function processarMensagem(psid, texto) {
     const textoLimpo = String(texto).slice(0, 2000);
     sessao.historico.push({ role: "user", parts: [{ text: textoLimpo }] });
 
-    // Limita historico (janela de 20 trocas)
-    if (sessao.historico.length > 20) {
-      sessao.historico = sessao.historico.slice(-20);
+    // Limita historico preservando contexto inicial (primeiras 4 trocas = âncora
+    // de nome/dados já coletados) + janela das ultimas 36 mensagens.
+    // Total max: 4 + 36 = 40, evitando que dados coletados no inicio sejam perdidos.
+    const MAX_HIST = 40;
+    const ANCORA = 4; // mensagens iniciais sempre preservadas
+    if (sessao.historico.length > MAX_HIST) {
+      sessao.historico = [
+        ...sessao.historico.slice(0, ANCORA),
+        ...sessao.historico.slice(-(MAX_HIST - ANCORA)),
+      ];
     }
 
     let respostaIA = "";
@@ -353,13 +360,16 @@ async function processarPagamento(psid, setor, dados) {
       timestamp: Date.now(),
     });
 
+    // Mensagem 1: instrucoes
     await enviarTexto(
       psid,
-      `Para finalizar, faca o PIX de R$ ${setor.preco.toFixed(2).replace(".", ",")}:\n\n` +
-      `Codigo PIX (copia e cola):\n${cobranca.codigoPix}\n\n` +
+      `Tudo certo! Para finalizar, faca o PIX de R$ ${setor.preco.toFixed(2).replace(".", ",")}.\n\n` +
+      `No proximo campo esta o codigo PIX — e so copiar e colar no app do seu banco.\n` +
       `Valido por 30 minutos. Assim que o pagamento for confirmado, ` +
       `seu documento chega aqui automaticamente!`
     );
+    // Mensagem 2: so o codigo PIX (facil de copiar para leigos)
+    await enviarTexto(psid, cobranca.codigoPix);
   } catch (erro) {
     console.error("[PAGAMENTO] Erro ao criar cobranca:", erro.message);
     await enviarTexto(

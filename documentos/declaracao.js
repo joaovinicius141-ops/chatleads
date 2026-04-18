@@ -37,7 +37,8 @@ function gerarDeclaracao(dados, caminhoDestino) {
         `nacionalidade ${dados.nacionalidade || "________________"}, ` +
         `estado civil ${dados.estado_civil || "________________"}, ` +
         `profiss\u00e3o ${dados.profissao || "________________"}, ` +
-        `inscrito(a) no RG sob o n\u00ba ${dados.rg || "________________"} ` +
+        `inscrito(a) no RG sob o n\u00ba ${dados.rg || "________________"}` +
+        `${dados.orgao_expedidor ? ` ${dados.orgao_expedidor}` : ""} ` +
         `e no CPF sob o n\u00ba ${dados.cpf || "________________"}, ` +
         `DECLARO para os devidos fins de direito e sob as penas da lei, ` +
         `que resido e mantenho domic\u00edlio no endere\u00e7o abaixo:`;
