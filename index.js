@@ -409,54 +409,129 @@ async function entregarDocumento(pedido) {
 }
 
 // ─── REVISAO POS-ENTREGA ──────────────────────────────────────
-// Gemini analisa os dados do documento vs. reclamacao do cliente.
-// Responde com [ERRO_ENCONTRADO] ou [SEM_ERRO] + explicacao.
+// Gemini analisa os dados vs. reclamacao e decide:
+//   [SEM_ERRO]          → explica ao cliente por que esta correto
+//   [CORRECAO:{...}]    → regenera PDF com dados corrigidos e entrega
+//   [ERRO_MANUAL]       → erro nao automatizavel, encaminha para Pedro
 async function revisarDocumento(userId, reclamacao, entrega, canal) {
-  console.log(`[REVISAO] Iniciando revisao pos-entrega: tipo=${entrega.tipo} ${canal.nome}:${userId}`);
+  console.log(`[REVISAO] Iniciando: tipo=${entrega.tipo} ${canal.nome}:${userId}`);
 
   const promptRevisao =
     `Voce e um revisor de documentos da Crie Seu Contrato.\n` +
-    `Um cliente recebeu um documento do tipo "${entrega.tipo}" e reportou um problema ou insatisfacao.\n\n` +
-    `DADOS USADOS PARA GERAR O DOCUMENTO:\n${JSON.stringify(entrega.dados, null, 2)}\n\n` +
+    `Um cliente recebeu um documento do tipo "${entrega.tipo}" e reportou um problema.\n\n` +
+    `DADOS ORIGINAIS DO DOCUMENTO:\n${JSON.stringify(entrega.dados, null, 2)}\n\n` +
     `MENSAGEM DO CLIENTE:\n"${String(reclamacao).slice(0, 1000)}"\n\n` +
     `SUA TAREFA:\n` +
-    `1. Analise os dados do documento com atencao\n` +
-    `2. Verifique se ha erros evidentes, dados incorretos ou inconsistencias nos dados\n` +
-    `3. Considere a reclamacao do cliente em relacao ao que foi gerado\n\n` +
-    `FORMATO DE RESPOSTA OBRIGATORIO:\n` +
-    `- Se encontrar erro real nos dados: comece com [ERRO_ENCONTRADO] e descreva brevemente o problema\n` +
-    `- Se nao encontrar erro: comece com [SEM_ERRO] e explique de forma simples e empatica ` +
-    `para o cliente o que foi gerado e por que os dados parecem corretos\n` +
-    `Seja humano, breve e claro. Nao repita os dados tecnicos ao cliente.`;
+    `1. Analise os dados e a reclamacao com atencao\n` +
+    `2. Determine se ha um erro real e se e possivel corrigi-lo automaticamente\n\n` +
+    `FORMATO DE RESPOSTA OBRIGATORIO (escolha apenas um):\n\n` +
+    `OPCAO A — Nao ha erro nos dados:\n` +
+    `[SEM_ERRO]\n` +
+    `<mensagem empatica explicando o que foi gerado e por que esta correto>\n\n` +
+    `OPCAO B — Ha erro e voce consegue corrigir com os dados disponiveis:\n` +
+    `[CORRECAO:{"tipo":"${entrega.tipo}","dados":{...JSON completo com os dados corrigidos...}}]\n` +
+    `<mensagem breve ao cliente explicando o que foi corrigido>\n` +
+    `IMPORTANTE: inclua TODOS os campos do JSON original, apenas corrigindo o necessario.\n\n` +
+    `OPCAO C — Ha erro mas nao e possivel corrigir automaticamente (ex: cliente quer mudar tipo de doc, ` +
+    `dado ambiguo, informacao nova que o sistema nao tem):\n` +
+    `[ERRO_MANUAL]\n` +
+    `<explicacao breve do motivo>\n\n` +
+    `Seja humano e breve. Nao exponha dados tecnicos ao cliente.`;
 
   try {
     const resposta = await chamarGemini(
       [{ role: "user", parts: [{ text: promptRevisao }] }],
-      "Voce e um revisor tecnico de documentos. Analise com rigor e responda no formato solicitado."
+      "Voce e um revisor tecnico de documentos. Siga rigorosamente o formato de resposta solicitado."
     );
 
-    if (resposta.includes("[ERRO_ENCONTRADO]")) {
-      const detalhe = resposta.replace(/\[ERRO_ENCONTRADO\]/g, "").trim();
-      console.warn(`[REVISAO] Erro encontrado no documento de ${canal.nome}:${userId} — ${detalhe}`);
-      await canal.enviarTexto(
-        userId,
-        `Identificamos um possivel problema no seu documento.\n\n${detalhe}\n\n` +
-        `Entre em contato com nossa equipe para corrigirmos sem custo adicional:\n\n` +
-        linhaContato()
-      );
-    } else {
+    // ── Caso A: sem erro ──────────────────────────────────────
+    if (resposta.includes("[SEM_ERRO]")) {
       const explicacao = resposta.replace(/\[SEM_ERRO\]/g, "").trim();
-      console.log(`[REVISAO] Sem erros encontrados para ${canal.nome}:${userId}`);
+      console.log(`[REVISAO] Sem erros: ${canal.nome}:${userId}`);
       await canal.enviarTexto(userId, explicacao);
+      return;
     }
+
+    // ── Caso B: correcao automatica ───────────────────────────
+    if (resposta.includes("[CORRECAO:")) {
+      const dadosCorrigidos = extrairCorrecao(resposta);
+      const msgCliente = resposta.replace(/\[CORRECAO:[^\]]*\]/s, "").trim();
+
+      if (!dadosCorrigidos) {
+        console.error("[REVISAO] Falha ao parsear JSON de correcao — encaminhando para Pedro");
+        await enviarContatoPedro(userId, canal);
+        return;
+      }
+
+      console.log(`[REVISAO] Corrigindo automaticamente: tipo=${dadosCorrigidos.tipo} ${canal.nome}:${userId}`);
+      await canal.enviarTexto(userId, "Encontrei o problema! Estou gerando uma versao corrigida para voce...");
+
+      try {
+        const resultado = await gerarDocumento(dadosCorrigidos.tipo, dadosCorrigidos.dados);
+
+        if (!resultado.sucesso) throw new Error("gerarDocumento retornou sucesso=false");
+
+        const enviouDoc = await canal.enviarArquivo(userId, resultado.caminho, resultado.nomeArquivo);
+
+        if (enviouDoc) {
+          await canal.enviarTexto(
+            userId,
+            (msgCliente || "Documento corrigido e reenviado!") +
+            "\n\nQualquer outra duvida, e so chamar!"
+          );
+          console.log(`[REVISAO] Documento corrigido entregue: ${canal.nome}:${userId}`);
+        } else {
+          throw new Error("Falha no envio do arquivo corrigido");
+        }
+      } catch (errGeracao) {
+        console.error(`[REVISAO] Falha na geracao/envio do doc corrigido: ${errGeracao.message}`);
+        await enviarContatoPedro(userId, canal);
+      }
+      return;
+    }
+
+    // ── Caso C: erro manual ───────────────────────────────────
+    const motivo = resposta.replace(/\[ERRO_MANUAL\]/g, "").trim();
+    console.warn(`[REVISAO] Erro manual: ${canal.nome}:${userId} — ${motivo}`);
+    await enviarContatoPedro(userId, canal);
+
   } catch (err) {
     console.error("[REVISAO] Erro ao chamar Gemini:", err.message);
-    await canal.enviarTexto(
-      userId,
-      "Nao consegui revisar seu documento agora. Por favor, fale diretamente com nossa equipe:\n\n" +
-      linhaContato()
-    );
+    await enviarContatoPedro(userId, canal);
   }
+}
+
+// Extrai e valida o JSON de correcao da resposta do Gemini
+// Formato esperado: [CORRECAO:{"tipo":"...","dados":{...}}]
+function extrairCorrecao(resposta) {
+  const idx = resposta.indexOf("[CORRECAO:");
+  if (idx === -1) return null;
+  const inicio = resposta.indexOf("{", idx);
+  if (inicio === -1) return null;
+  let nivel = 0, fim = -1;
+  for (let i = inicio; i < resposta.length; i++) {
+    if (resposta[i] === "{") nivel++;
+    else if (resposta[i] === "}") { nivel--; if (nivel === 0) { fim = i; break; } }
+  }
+  if (fim === -1) return null;
+  try {
+    const obj = JSON.parse(resposta.slice(inicio, fim + 1));
+    if (!obj.tipo || !obj.dados) return null;
+    return obj;
+  } catch (e) {
+    console.error("[REVISAO] JSON de correcao invalido:", e.message);
+    return null;
+  }
+}
+
+// Envia o contato do Pedro com mensagem padrao de encaminhamento
+async function enviarContatoPedro(userId, canal) {
+  await canal.enviarTexto(
+    userId,
+    "Nao consegui corrigir automaticamente desta vez. " +
+    "Nossa equipe vai te ajudar a resolver sem nenhum custo adicional:\n\n" +
+    linhaContato()
+  );
 }
 
 // ─── DETECTA [DADOS_COMPLETOS:{...}] ──────────────────────────
