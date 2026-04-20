@@ -881,6 +881,46 @@ app.get("/admin/painel", (req, res) => {
   res.sendFile(path.join(__dirname, "dashboard.html"));
 });
 
+// ─── TESTE DE EMAIL (protegido por ADMIN_SECRET) ──────────────
+app.get("/admin/teste-email", async (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send("ADMIN_SECRET nao configurado");
+  if (!compararSeguro(req.query.secret, ADMIN_SECRET)) return res.status(403).send("Acesso negado");
+
+  const { emailConfigurado: eConf } = require("./email");
+  if (!eConf()) {
+    return res.status(503).json({
+      ok: false,
+      erro: "Email nao configurado. Verifique EMAIL_EMPRESA, EMAIL_SMTP_HOST, EMAIL_SMTP_USER e EMAIL_SMTP_PASS.",
+    });
+  }
+
+  try {
+    await enviarEmailSuporte({
+      canal: "teste-manual",
+      userId: "admin",
+      motivo: "Teste manual do endpoint /admin/teste-email",
+      historicoMsgs: [
+        "Cliente: oi preciso de ajuda",
+        "Bot: claro, como posso ajudar?",
+        "Cliente: quero corrigir meu documento",
+      ],
+      dadosEntregues: {
+        tipo: "declaracao",
+        dados: {
+          nome: "Joao Vinicius Vieira Peixoto",
+          cpf: "098.020.584-08",
+          endereco: "Rua Agamenon Magalhaes, 212",
+          cidade: "Bom Conselho",
+          estado: "PE",
+        },
+      },
+    });
+    res.json({ ok: true, mensagem: `Email de teste enviado para ${process.env.EMAIL_EMPRESA}` });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // ─── ROTINA DE LIMPEZA (30 DIAS) ──────────────────────────────
 limpeza.iniciarAgendamento();
 
