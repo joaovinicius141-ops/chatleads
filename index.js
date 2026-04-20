@@ -82,8 +82,8 @@ function getSessao(canal, userId) {
       sessoes.delete(maisAntigo);
       console.warn(`[SESSAO] Limite atingido — removida ${maisAntigo}`);
     }
-    // Nova sessao comeca no fluxo de consentimento LGPD
-    s = { estado: "lgpd", setor: null, historico: [], atualizadoEm: Date.now() };
+    // Nova sessao comeca com boas-vindas
+    s = { estado: "boas_vindas", setor: null, historico: [], atualizadoEm: Date.now() };
     sessoes.set(chave, s);
   } else {
     s.atualizadoEm = Date.now();
@@ -236,35 +236,44 @@ async function processarComTimeout(userId, texto, canal) {
   }
 }
 
+// ─── SAUDACAO BASEADA NO HORARIO (fuso: America/Sao_Paulo) ────
+function saudacao() {
+  const hora = new Date().toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "numeric",
+    hour12: false,
+  });
+  const h = parseInt(hora, 10);
+  if (h >= 5 && h < 12) return "Bom dia";
+  if (h >= 12 && h < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
 // ─── FLUXO PRINCIPAL POR MENSAGEM ─────────────────────────────
 async function processarMensagem(userId, texto, canal) {
   const sessao = getSessao(canal, userId);
 
-  // ── Estado: aguardando exibir tela de consentimento LGPD ────
-  if (sessao.estado === "lgpd") {
-    sessao.estado = "lgpd_aguardando";
-    const msgLgpd =
-      "Ola! Para gerarmos seu documento, precisamos coletar alguns dados pessoais. " +
-      "Ao continuar, voce declara estar de acordo com nossos Termos de Uso e autoriza " +
-      "o tratamento dos dados apenas para esta finalidade. " +
-      "Seus dados e o PDF serao excluidos permanentemente em 30 dias.";
-
-    // Usa Quick Reply se o canal suportar, senso envia texto simples
-    if (typeof canal.enviarQuickReply === "function") {
-      await canal.enviarQuickReply(userId, msgLgpd, [
-        { titulo: "Aceito e Continuar", payload: "LGPD_ACEITO" },
-      ]);
-    } else {
-      await canal.enviarTexto(userId, msgLgpd + '\n\nDigite "aceito" para continuar.');
-    }
+  // ── Estado: primeira mensagem — envia boas-vindas + menu ────
+  if (sessao.estado === "boas_vindas") {
+    sessao.estado = "menu";
+    await canal.enviarTexto(
+      userId,
+      `${saudacao()}! Bem-vindo ao Crie seu Contrato!!!`
+    );
+    await new Promise((r) => setTimeout(r, 500));
+    await canal.enviarTexto(userId, textoMenu());
     return;
   }
 
-  // ── Estado: aguardando resposta do consentimento LGPD ───────
+  // ── Estado: aguardando aceite LGPD → inicia atendimento com Gemini ─
+  // (qualquer mensagem neste estado e tratada como aceite)
   if (sessao.estado === "lgpd_aguardando") {
     console.log(`[LGPD] Aceite registrado: ${canal.nome}:${userId} em ${new Date().toISOString()}`);
-    sessao.estado = "menu";
-    await canal.enviarTexto(userId, textoMenu());
+    sessao.estado = "atendimento";
+
+    const respostaIA = await chamarGemini(sessao.historico, sessao.setor.prompt);
+    sessao.historico.push({ role: "model", parts: [{ text: respostaIA }] });
+    await canal.enviarTexto(userId, respostaIA);
     return;
   }
 
@@ -284,14 +293,25 @@ async function processarMensagem(userId, texto, canal) {
       await canal.enviarTexto(userId, textoMenu());
       return;
     }
-    sessao.estado = "atendimento";
+    // Salva setor e solicita aceite LGPD antes de coletar dados
     sessao.setor = setor;
     sessao.historico = [];
+    sessao.estado = "lgpd_aguardando";
     console.log(`[TRIAGEM] ${canal.nome}:${userId} escolheu setor: ${setor.nome}`);
 
-    const respostaIA = await chamarGemini(sessao.historico, setor.prompt);
-    sessao.historico.push({ role: "model", parts: [{ text: respostaIA }] });
-    await canal.enviarTexto(userId, respostaIA);
+    const msgLgpd =
+      "Para gerarmos seu documento, precisamos coletar alguns dados pessoais. " +
+      "Ao continuar, voce declara estar de acordo com nossos Termos de Uso e autoriza " +
+      "o tratamento dos dados apenas para esta finalidade. " +
+      "Seus dados e o PDF serao excluidos permanentemente em 30 dias.";
+
+    if (typeof canal.enviarQuickReply === "function") {
+      await canal.enviarQuickReply(userId, msgLgpd, [
+        { titulo: "Aceito e Continuar", payload: "LGPD_ACEITO" },
+      ]);
+    } else {
+      await canal.enviarTexto(userId, msgLgpd + '\n\nDigite "aceito" para continuar.');
+    }
     return;
   }
 
@@ -585,6 +605,9 @@ const GEMINI_USO_PATH = path.join(__dirname, "relatorios", "gemini_uso.json");
 
 function registrarUsoGemini(inputTokens, outputTokens) {
   try {
+    // Garante que o diretorio existe (Railway nao cria dirs automaticamente)
+    require("fs").mkdirSync(path.dirname(GEMINI_USO_PATH), { recursive: true });
+
     const hoje = new Date().toISOString().slice(0, 10);
     const custoUsd =
       (inputTokens  / 1_000_000) * GEMINI_PRECO_ENTRADA +

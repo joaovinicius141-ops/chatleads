@@ -8,6 +8,14 @@ const fs = require("fs");
 const PDFDocument = require("pdfkit");
 const { dataPorExtenso } = require("./recibo");
 
+// Formata CPF: "09802058408" → "098.020.584-08"
+// Numeros com quantidade diferente de 11 digitos sao retornados sem alteracao.
+function formatarCPF(cpf) {
+  const digits = String(cpf || "").replace(/\D/g, "");
+  if (digits.length !== 11) return cpf || "";
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+}
+
 // ── Rodape legal em 8pt cinza na ultima pagina ─────────────────
 // Requer bufferPages:true no construtor do PDFDocument.
 // Usa switchToPage + margem temporaria zero para nao criar pagina extra.
@@ -68,7 +76,7 @@ function gerarDeclaracao(dados, caminhoDestino) {
         `profiss\u00e3o ${dados.profissao || "________________"}, ` +
         `inscrito(a) no RG sob o n\u00ba ${dados.rg || "________________"}` +
         `${dados.orgao_expedidor ? ` ${dados.orgao_expedidor}` : ""} ` +
-        `e no CPF sob o n\u00ba ${dados.cpf || "________________"}, ` +
+        `e no CPF sob o n\u00ba ${formatarCPF(dados.cpf) || "________________"}, ` +
         `DECLARO para os devidos fins de direito e sob as penas da lei, ` +
         `que resido e mantenho domic\u00edlio no endere\u00e7o abaixo:`;
       doc.text(corpo, { align: "justify", lineGap: 3 });
@@ -129,7 +137,7 @@ function gerarDeclaracao(dados, caminhoDestino) {
       doc.moveDown(0.4);
       doc.fontSize(11)
         .text(dados.nome || "________________", { align: "center" });
-      doc.text(`CPF: ${dados.cpf || ""}`, { align: "center" });
+      doc.text(`CPF: ${formatarCPF(dados.cpf) || ""}`, { align: "center" });
 
       // ── Linha inferior ──────────────────────────────────────
       doc.moveDown(1);

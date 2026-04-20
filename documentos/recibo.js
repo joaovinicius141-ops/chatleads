@@ -94,6 +94,18 @@ function dataPorExtenso(iso) {
   return `${parseInt(p[2], 10)} de ${MESES[parseInt(p[1], 10) - 1] || ""} de ${p[0]}`;
 }
 
+// Formata CPF (11 digitos) ou CNPJ (14 digitos); outros valores retornados sem alteracao.
+function formatarCpfCnpj(valor) {
+  const digits = String(valor || "").replace(/\D/g, "");
+  if (digits.length === 11) {
+    return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+  }
+  if (digits.length === 14) {
+    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}/${digits.slice(8, 12)}-${digits.slice(12)}`;
+  }
+  return valor || "";
+}
+
 // ── Rodape legal em 8pt cinza na ultima pagina ─────────────────
 // Requer bufferPages:true no construtor do PDFDocument.
 function adicionarRodape(doc) {
@@ -157,7 +169,7 @@ function gerarRecibo(dados, caminhoDestino) {
 
       const corpo =
         `Recebi(emos) de ${dados.pagador || "________________"}, ` +
-        `inscrito(a) no CPF/CNPJ sob o n\u00ba ${dados.cpf_pagador || "____________"}, ` +
+        `inscrito(a) no CPF/CNPJ sob o n\u00ba ${formatarCpfCnpj(dados.cpf_pagador) || "____________"}, ` +
         `a import\u00e2ncia de ${formatarMoeda(dados.valor)} ` +
         `(${valorPorExtenso(dados.valor)}).`;
       doc.text(corpo, { align: "justify", lineGap: 3 });
@@ -188,7 +200,7 @@ function gerarRecibo(dados, caminhoDestino) {
       doc.moveDown(0.4);
       doc.fontSize(11)
         .text(dados.recebedor || "________________", { align: "center" });
-      doc.text(`CPF/CNPJ: ${dados.cpf_recebedor || ""}`, { align: "center" });
+      doc.text(`CPF/CNPJ: ${formatarCpfCnpj(dados.cpf_recebedor) || ""}`, { align: "center" });
 
       // ── Linha inferior ──────────────────────────────────────
       doc.moveDown(1);
