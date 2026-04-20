@@ -36,7 +36,8 @@ const SETORES = [
     nome: "Suporte",
     tipo: "suporte",
     preco: 0,
-    prompt: require("./prompts/suporte"),
+    // Funcao chamada no startup para incluir variaveis de ambiente
+    prompt: require("./prompts/suporte")(),
   },
 ];
 
