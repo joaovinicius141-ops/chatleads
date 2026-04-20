@@ -20,6 +20,12 @@ const express = require("express");
 const axios = require("axios");
 const crypto = require("crypto");
 const path = require("path");
+const https = require("https");
+
+// Agente HTTPS reutilizado para chamadas ao Gemini.
+// Evita o MaxListenersExceededWarning causado por muitos listeners TLS
+// quando cada chamada cria sua propria conexao.
+const geminiHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10 });
 
 const { gerarDocumento } = require("./gerador");
 const { criarCobrancaPix, verificarPagamento } = require("./pagamento");
@@ -133,10 +139,29 @@ setInterval(() => {
 const canaisAtivos = { messenger };
 if (whatsapp.ativo()) canaisAtivos.whatsapp = whatsapp;
 
+// ─── FILA DE PROCESSAMENTO POR SESSAO ─────────────────────────
+// Garante que mensagens do mesmo usuario sejam processadas em serie.
+// Sem isso, mensagens enviadas em rapida sucessao correm em paralelo,
+// corrompem o historico e fazem o bot repetir perguntas.
+const filasSessao = new Map();
+
+function enfileirarMensagem(userId, texto, canal) {
+  const chave = chaveSessao(canal, userId);
+  const ultimo = filasSessao.get(chave) || Promise.resolve();
+  const proximo = ultimo
+    .catch(() => {}) // erro na msg anterior nao trava a fila
+    .then(() => processarComTimeout(userId, texto, canal));
+  filasSessao.set(chave, proximo);
+  // Limpa entrada da fila quando nao houver mais mensagens pendentes
+  proximo.finally(() => {
+    if (filasSessao.get(chave) === proximo) filasSessao.delete(chave);
+  });
+}
+
 // ─── REGISTRO DOS WEBHOOKS DOS CANAIS ─────────────────────────
-messenger.registrarWebhook(app, processarComTimeout);
+messenger.registrarWebhook(app, enfileirarMensagem);
 if (whatsapp.ativo()) {
-  whatsapp.registrarWebhook(app, processarComTimeout);
+  whatsapp.registrarWebhook(app, enfileirarMensagem);
 }
 
 // ─── WEBHOOK DO MERCADO PAGO ──────────────────────────────────
@@ -653,7 +678,7 @@ async function chamarGemini(historico, promptSetor, tentativa = 1) {
         contents,
         generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
       },
-      { timeout: 30000 }
+      { timeout: 30000, httpsAgent: geminiHttpsAgent }
     );
 
     // Registra consumo de tokens para calculo de custo
