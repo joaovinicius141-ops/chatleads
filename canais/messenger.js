@@ -165,14 +165,23 @@ function registrarWebhook(app, onMensagem) {
         const userId = event.sender.id;
 
         // ── Bloqueio de midia (LGPD / seguranca) ──────────────
-        // Ignora fotos, arquivos e audios — so aceita texto digitado.
+        // Ignora fotos e arquivos. Audios recebem mensagem orientativa amigavel.
         if (event.message.attachments && event.message.attachments.length > 0) {
-          console.log(`[MESSENGER] Anexo bloqueado de ${userId}: tipo=${event.message.attachments[0].type}`);
-          enviarTexto(
-            userId,
-            "Por questoes de seguranca e protecao de dados, nao aceitamos fotos ou arquivos. " +
-            "Por favor, digite as informacoes diretamente no chat."
-          ).catch(() => {});
+          const tipo = event.message.attachments[0].type;
+          console.log(`[MESSENGER] Anexo bloqueado de ${userId}: tipo=${tipo}`);
+
+          if (tipo === "audio") {
+            enviarTexto(
+              userId,
+              "Ainda nao consigo ouvir audios \uD83D\uDE0A Mas e rapidinho — pode digitar aqui mesmo o que falou que te ajudo!"
+            ).catch(() => {});
+          } else {
+            enviarTexto(
+              userId,
+              "Por questoes de seguranca e protecao de dados, nao aceitamos fotos ou arquivos. " +
+              "Por favor, digite as informacoes diretamente no chat."
+            ).catch(() => {});
+          }
           continue;
         }
 
