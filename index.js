@@ -30,7 +30,8 @@ const geminiHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10 });
 const { gerarDocumento } = require("./gerador");
 const { criarCobrancaPix, verificarPagamento } = require("./pagamento");
 const { textoMenu, buscarSetor } = require("./setores");
-const { linhaContato } = require("./contato");
+const { linhaContato, nomeSuporte } = require("./contato");
+const { enviarEmailSuporte } = require("./email");
 
 const messenger = require("./canais/messenger");
 const whatsapp = require("./canais/whatsapp");
@@ -65,6 +66,9 @@ console.log(`[CONFIG] GEMINI_MODEL: ${GEMINI_MODEL}`);
 console.log(`[CONFIG] NODE_ENV: ${NODE_ENV}`);
 console.log(`[CONFIG] ADMIN_SECRET: ${ADMIN_SECRET ? "configurado" : "NAO DEFINIDO"}`);
 console.log(`[CONFIG] WHATSAPP: ${whatsapp.ativo() ? "ativo" : "nao configurado"}`);
+console.log(`[CONFIG] NOME_SUPORTE: ${nomeSuporte()}`);
+const { emailConfigurado } = require("./email");
+console.log(`[CONFIG] EMAIL_SUPORTE: ${emailConfigurado() ? process.env.EMAIL_EMPRESA : "NAO CONFIGURADO"}`)
 if (MODO_TESTE) {
   console.warn("⚠️  [MODO_TESTE] ATIVO — pagamentos desativados, documentos entregues na hora!");
 }
@@ -364,7 +368,11 @@ async function processarMensagem(userId, texto, canal) {
 
     if (sessao.historicoRevisao.length > MAX_MSGS_REVISAO) {
       resetarSessao(canal, userId);
-      await enviarContatoPedro(userId, canal);
+      await enviarContatoPedro(userId, canal, {
+        motivo: "Limite de mensagens na revisao pos-entrega atingido",
+        historicoMsgs: sessao.historicoRevisao,
+        dadosEntregues: sessao.dadosEntregues,
+      });
       return;
     }
 
@@ -429,12 +437,18 @@ async function processarMensagem(userId, texto, canal) {
       return;
     }
 
-    // Suporte: verifica se Gemini quer encaminhar para Pedro
+    // Suporte: verifica se Gemini quer encaminhar para suporte humano
     if (respostaIA.includes("[ENCAMINHAR_PEDRO]")) {
       const msgCliente = respostaIA.replace(/\[ENCAMINHAR_PEDRO\]/g, "").trim();
+      const historicoTexto = sessao.historico
+        .filter(m => m.role === "user")
+        .map(m => m.parts[0].text);
       resetarSessao(canal, userId);
       if (msgCliente) await canal.enviarTexto(userId, msgCliente);
-      await enviarContatoPedro(userId, canal);
+      await enviarContatoPedro(userId, canal, {
+        motivo: "Gemini de suporte solicitou encaminhamento humano",
+        historicoMsgs: historicoTexto,
+      });
       return;
     }
 
@@ -468,9 +482,21 @@ async function processarMensagem(userId, texto, canal) {
     if (sessao.setor && sessao.setor.tipo === "suporte") {
       sessao.tentativasSuporte = (sessao.tentativasSuporte || 0) + 1;
       if (sessao.tentativasSuporte >= 3) {
-        console.log(`[SUPORTE] 3 tentativas sem resolucao — escalando para Pedro: ${canal.nome}:${userId}`);
+        const suporte = nomeSuporte();
+        console.log(`[SUPORTE] 3 tentativas sem resolucao — escalando para ${suporte}: ${canal.nome}:${userId}`);
+        const historicoTexto = sessao.historico
+          .filter(m => m.role === "user")
+          .map(m => m.parts[0].text);
         resetarSessao(canal, userId);
-        await enviarContatoPedro(userId, canal);
+        await canal.enviarTexto(
+          userId,
+          `Percebi que nao consegui resolver seu problema por aqui. ` +
+          `Vou acionar nosso atendimento humano para te ajudar com isso!`
+        );
+        await enviarContatoPedro(userId, canal, {
+          motivo: "3 tentativas no suporte sem resolucao automatica",
+          historicoMsgs: historicoTexto,
+        });
       }
     }
   }
@@ -621,8 +647,12 @@ async function revisarDocumento(userId, reclamacao, entrega, canal) {
       const msgCliente = resposta.replace(/\[CORRECAO:[^\]]*\]/s, "").trim();
 
       if (!dadosCorrigidos) {
-        console.error("[REVISAO] Falha ao parsear JSON de correcao — encaminhando para Pedro");
-        await enviarContatoPedro(userId, canal);
+        console.error("[REVISAO] Falha ao parsear JSON de correcao — encaminhando para suporte");
+        await enviarContatoPedro(userId, canal, {
+          motivo: "Falha ao parsear JSON de correcao automatica",
+          historicoMsgs: reclamacao.split("\n---\n"),
+          dadosEntregues: entrega,
+        });
         return true;
       }
 
@@ -648,7 +678,11 @@ async function revisarDocumento(userId, reclamacao, entrega, canal) {
         }
       } catch (errGeracao) {
         console.error(`[REVISAO] Falha na geracao/envio do doc corrigido: ${errGeracao.message}`);
-        await enviarContatoPedro(userId, canal);
+        await enviarContatoPedro(userId, canal, {
+          motivo: `Falha tecnica na geracao do documento corrigido: ${errGeracao.message}`,
+          historicoMsgs: reclamacao.split("\n---\n"),
+          dadosEntregues: entrega,
+        });
       }
       return true;
     }
@@ -656,12 +690,20 @@ async function revisarDocumento(userId, reclamacao, entrega, canal) {
     // ── Caso C: erro manual ───────────────────────────────────
     const motivo = resposta.replace(/\[ERRO_MANUAL\]/g, "").trim();
     console.warn(`[REVISAO] Erro manual: ${canal.nome}:${userId} — ${motivo}`);
-    await enviarContatoPedro(userId, canal);
+    await enviarContatoPedro(userId, canal, {
+      motivo: motivo || "Gemini nao conseguiu corrigir automaticamente",
+      historicoMsgs: reclamacao.split("\n---\n"),
+      dadosEntregues: entrega,
+    });
     return true;
 
   } catch (err) {
     console.error("[REVISAO] Erro ao chamar Gemini:", err.message);
-    await enviarContatoPedro(userId, canal);
+    await enviarContatoPedro(userId, canal, {
+      motivo: `Erro ao chamar Gemini na revisao: ${err.message}`,
+      historicoMsgs: reclamacao.split("\n---\n"),
+      dadosEntregues: entrega,
+    });
     return true;
   }
 }
@@ -689,14 +731,23 @@ function extrairCorrecao(resposta) {
   }
 }
 
-// Envia o contato do Pedro com mensagem padrao de encaminhamento
-async function enviarContatoPedro(userId, canal) {
+// Envia contato do suporte humano ao cliente e notifica a equipe por email.
+// contexto (opcional): { motivo, historicoMsgs, dadosEntregues }
+async function enviarContatoPedro(userId, canal, contexto = {}) {
   await canal.enviarTexto(
     userId,
-    "Nao consegui corrigir automaticamente desta vez. " +
-    "Nossa equipe vai te ajudar a resolver sem nenhum custo adicional:\n\n" +
+    `Vou acionar nosso atendimento humano para te ajudar — sem nenhum custo adicional!\n\n` +
     linhaContato()
   );
+
+  // Notificacao por email para a equipe de suporte
+  await enviarEmailSuporte({
+    canal: canal.nome,
+    userId,
+    motivo: contexto.motivo || "Escalado automaticamente pelo bot",
+    historicoMsgs: contexto.historicoMsgs || [],
+    dadosEntregues: contexto.dadosEntregues || null,
+  });
 }
 
 // ─── DETECTA [DADOS_COMPLETOS:{...}] ──────────────────────────

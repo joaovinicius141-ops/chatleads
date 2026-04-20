@@ -1,19 +1,20 @@
 // ============================================================
 // contato.js
-// Retorna a linha de contato do Pedro respeitando o horario
-// comercial (America/Sao_Paulo, 8h-22h).
+// Retorna a linha de contato do suporte humano respeitando o
+// horario comercial (America/Sao_Paulo, 8h-22h).
 //
 // Fora do horario, o bot NAO passa o numero direto — pede para o
-// cliente mandar uma mensagem no WhatsApp do Pedro que sera
-// respondida assim que ele estiver disponivel.
+// cliente mandar mensagem no WhatsApp que sera respondida depois.
 //
 // Config via .env:
-//   WHATSAPP_PEDRO   — numero do Pedro (ex: "(11) 99999-0000")
+//   NOME_SUPORTE     — nome do responsavel pelo suporte (default: "Suporte")
+//   WHATSAPP_PEDRO   — numero do WhatsApp do suporte (ex: "(81) 99999-0000")
 //   HORARIO_INICIO   — hora de inicio (default 8)
 //   HORARIO_FIM      — hora de fim   (default 22)
 //   TIMEZONE         — default "America/Sao_Paulo"
 // ============================================================
 
+const NOME_SUPORTE   = process.env.NOME_SUPORTE || "Suporte";
 const WHATSAPP_PEDRO = process.env.WHATSAPP_PEDRO || "(00) 00000-0000";
 const HORARIO_INICIO = Number(process.env.HORARIO_INICIO || 8);
 const HORARIO_FIM = Number(process.env.HORARIO_FIM || 22);
@@ -46,13 +47,18 @@ function dentroDoHorario() {
 // Fora do horario: orienta a mandar mensagem para ser respondido depois.
 function linhaContato() {
   if (dentroDoHorario()) {
-    return `Fale com o Pedro no WhatsApp: ${WHATSAPP_PEDRO}`;
+    return `Fale com ${NOME_SUPORTE} no WhatsApp: ${WHATSAPP_PEDRO}`;
   }
   return (
     `Nosso atendimento humano funciona das ${HORARIO_INICIO}h as ${HORARIO_FIM}h.\n` +
-    `Voce pode mandar uma mensagem no WhatsApp do Pedro (${WHATSAPP_PEDRO}) ` +
+    `Voce pode mandar uma mensagem no WhatsApp de ${NOME_SUPORTE} (${WHATSAPP_PEDRO}) ` +
     `que ele responde assim que estiver disponivel.`
   );
 }
 
-module.exports = { linhaContato, dentroDoHorario, horaAtualBR };
+// Exporta o nome do suporte para uso em outros modulos
+function nomeSuporte() {
+  return NOME_SUPORTE;
+}
+
+module.exports = { linhaContato, nomeSuporte, dentroDoHorario, horaAtualBR };
