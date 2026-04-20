@@ -74,6 +74,12 @@ if (MODO_TESTE) {
 const sessoes = new Map();
 const MAX_SESSOES = 5000;
 const TTL_SESSAO_MS = 2 * 60 * 60 * 1000;
+const TTL_ENTREGA_MS = 12 * 60 * 60 * 1000;
+
+// Map separado para persistir contexto pos-entrega por ate 12h.
+// Sobrevive a expiracao de sessao — permite que o cliente retorne
+// e ainda encontre o estado pos_entrega ativo.
+const entregasRecentes = new Map();
 
 function chaveSessao(canal, userId) {
   return `${canal.nome}:${userId}`;
@@ -88,8 +94,23 @@ function getSessao(canal, userId) {
       sessoes.delete(maisAntigo);
       console.warn(`[SESSAO] Limite atingido — removida ${maisAntigo}`);
     }
-    // Nova sessao comeca com boas-vindas
-    s = { estado: "boas_vindas", setor: null, historico: [], atualizadoEm: Date.now() };
+    // Verifica se ha entrega recente (< 12h) para restaurar pos_entrega
+    const entrega = entregasRecentes.get(chave);
+    if (entrega && Date.now() - entrega.entregueEm < TTL_ENTREGA_MS) {
+      console.log(`[SESSAO] Restaurando pos_entrega para ${chave}`);
+      s = {
+        estado: "pos_entrega",
+        setor: null,
+        historico: [],
+        dadosEntregues: { tipo: entrega.tipo, dados: entrega.dados },
+        entregueEm: entrega.entregueEm,
+        historicoRevisao: [],
+        atualizadoEm: Date.now(),
+      };
+    } else {
+      // Nova sessao comeca com boas-vindas
+      s = { estado: "boas_vindas", setor: null, historico: [], atualizadoEm: Date.now() };
+    }
     sessoes.set(chave, s);
   } else {
     s.atualizadoEm = Date.now();
@@ -112,6 +133,14 @@ setInterval(() => {
     if ((s.atualizadoEm || 0) < limite) sessoes.delete(chave);
   }
 }, 15 * 60 * 1000);
+
+// Limpa entregasRecentes expiradas a cada 30min
+setInterval(() => {
+  const limite = Date.now() - TTL_ENTREGA_MS;
+  for (const [chave, e] of entregasRecentes.entries()) {
+    if (e.entregueEm < limite) entregasRecentes.delete(chave);
+  }
+}, 30 * 60 * 1000);
 
 // Comparacao de strings em tempo constante
 function compararSeguro(a, b) {
@@ -296,6 +325,15 @@ async function processarMensagem(userId, texto, canal) {
     console.log(`[LGPD] Aceite registrado: ${canal.nome}:${userId} em ${new Date().toISOString()}`);
     sessao.estado = "atendimento";
 
+    // Mensagem de boas-vindas exclusiva para o setor de suporte
+    if (sessao.setor && sessao.setor.tipo === "suporte") {
+      sessao.tentativasSuporte = 0;
+      await canal.enviarTexto(
+        userId,
+        "Ola! Estou aqui para te ajudar \uD83D\uDE0A\nMe conta o que esta acontecendo que eu ja verifico para voce!"
+      );
+    }
+
     const respostaIA = await chamarGemini(sessao.historico, sessao.setor.prompt);
     sessao.historico.push({ role: "model", parts: [{ text: respostaIA }] });
     await canal.enviarTexto(userId, respostaIA);
@@ -307,12 +345,12 @@ async function processarMensagem(userId, texto, canal) {
   // Gemini acumula todo o contexto antes de decidir a correcao.
   // A sessao SO e resetada quando o problema for resolvido (ou encerrado).
   if (sessao.estado === "pos_entrega") {
-    const JANELA_24H = 24 * 60 * 60 * 1000;
-    if (Date.now() - (sessao.entregueEm || 0) > JANELA_24H) {
+    if (Date.now() - (sessao.entregueEm || 0) > TTL_ENTREGA_MS) {
+      entregasRecentes.delete(chaveSessao(canal, userId));
       resetarSessao(canal, userId);
       await canal.enviarTexto(
         userId,
-        "O prazo de 24 horas para solicitar correcoes ja encerrou. " +
+        "O prazo de 12 horas para solicitar correcoes ja encerrou. " +
         "Para qualquer outra ajuda, entre em contato com nossa equipe:\n\n" +
         linhaContato()
       );
@@ -425,6 +463,16 @@ async function processarMensagem(userId, texto, canal) {
 
     sessao.historico.push({ role: "model", parts: [{ text: respostaIA }] });
     await canal.enviarTexto(userId, respostaIA);
+
+    // Suporte: escalacao automatica apos 3 rodadas sem resolucao
+    if (sessao.setor && sessao.setor.tipo === "suporte") {
+      sessao.tentativasSuporte = (sessao.tentativasSuporte || 0) + 1;
+      if (sessao.tentativasSuporte >= 3) {
+        console.log(`[SUPORTE] 3 tentativas sem resolucao — escalando para Pedro: ${canal.nome}:${userId}`);
+        resetarSessao(canal, userId);
+        await enviarContatoPedro(userId, canal);
+      }
+    }
   }
 }
 
@@ -488,7 +536,7 @@ async function entregarDocumento(pedido) {
       pedido.userId,
       "Aqui esta seu documento! \u2705\n\n" +
       "Salve o PDF agora — ele fica disponivel por 30 dias.\n\n" +
-      "Encontrou algo errado? Voce tem ate 24 horas para solicitar uma correcao gratuita. " +
+      "Encontrou algo errado? Voce tem ate 12 horas para solicitar uma correcao gratuita. " +
       "E so me dizer aqui o que precisa ajustar!"
     );
     // Ativa estado pos_entrega para capturar feedback do cliente
@@ -497,6 +545,12 @@ async function entregarDocumento(pedido) {
     sessao.dadosEntregues = { tipo: pedido.tipo, dados: pedido.dados };
     sessao.entregueEm = Date.now();
     sessao.historicoRevisao = [];
+    // Persiste contexto por 12h (sobrevive expiracao de sessao de 2h)
+    entregasRecentes.set(chaveSessao(canal, pedido.userId), {
+      tipo: pedido.tipo,
+      dados: pedido.dados,
+      entregueEm: sessao.entregueEm,
+    });
   } else {
     // Log critico — pagamento confirmado mas entrega falhou
     console.error(
