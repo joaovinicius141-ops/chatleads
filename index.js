@@ -39,6 +39,10 @@ const ADMIN_SECRET = process.env.ADMIN_SECRET || "";
 const NODE_ENV = process.env.NODE_ENV || "development";
 const PORT = process.env.PORT || 3000;
 
+// MODO_TESTE=true → pula o PIX e entrega o documento imediatamente.
+// Use apenas para testes. Desative em producao apos os testes.
+const MODO_TESTE = process.env.MODO_TESTE === "true";
+
 const app = express();
 // body-parser preservando o raw body para validacao de assinatura HMAC
 app.use(
@@ -55,6 +59,9 @@ console.log(`[CONFIG] GEMINI_MODEL: ${GEMINI_MODEL}`);
 console.log(`[CONFIG] NODE_ENV: ${NODE_ENV}`);
 console.log(`[CONFIG] ADMIN_SECRET: ${ADMIN_SECRET ? "configurado" : "NAO DEFINIDO"}`);
 console.log(`[CONFIG] WHATSAPP: ${whatsapp.ativo() ? "ativo" : "nao configurado"}`);
+if (MODO_TESTE) {
+  console.warn("⚠️  [MODO_TESTE] ATIVO — pagamentos desativados, documentos entregues na hora!");
+}
 
 // ─── ESTADO DAS SESSOES ───────────────────────────────────────
 // Identificadas por "canal:userId" para nao colidirem entre canais.
@@ -318,7 +325,20 @@ async function processarMensagem(userId, texto, canal) {
       console.log(`Marcacao detectada: tipo=${marcacao.tipo}`);
       const setorAtual = sessao.setor;
       resetarSessao(canal, userId);
-      await processarPagamento(userId, setorAtual, marcacao.dados, canal);
+
+      if (MODO_TESTE) {
+        // Modo teste: pula o PIX e entrega direto
+        console.warn(`[MODO_TESTE] Entrega direta sem pagamento: tipo=${marcacao.tipo} ${canal.nome}:${userId}`);
+        await canal.enviarTexto(userId, "🧪 Modo de teste ativo — entregando seu documento sem cobrança...");
+        await entregarDocumento({
+          userId,
+          canalNome: canal.nome,
+          tipo: setorAtual.tipo,
+          dados: marcacao.dados,
+        });
+      } else {
+        await processarPagamento(userId, setorAtual, marcacao.dados, canal);
+      }
       return;
     }
 
@@ -666,7 +686,10 @@ app.get("/admin/painel", (req, res) => {
 limpeza.iniciarAgendamento();
 
 // ─── ROTA DE SAUDE ────────────────────────────────────────────
-app.get("/", (_req, res) => res.send(`chatleads ativo | modelo: ${GEMINI_MODEL}`));
+app.get("/", (_req, res) => res.send(
+  `chatleads ativo | modelo: ${GEMINI_MODEL}` +
+  (MODO_TESTE ? " | ⚠️ MODO TESTE — sem cobrança" : "")
+));
 
 // ─── INICIA SERVIDOR ──────────────────────────────────────────
 app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
