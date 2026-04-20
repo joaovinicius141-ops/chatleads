@@ -16,6 +16,7 @@
 
 const NOME_SUPORTE   = process.env.NOME_SUPORTE || "Suporte";
 const WHATSAPP_PEDRO = process.env.WHATSAPP_PEDRO || "(00) 00000-0000";
+const EMAIL_EMPRESA  = process.env.EMAIL_EMPRESA || "";
 const HORARIO_INICIO = Number(process.env.HORARIO_INICIO || 8);
 const HORARIO_FIM = Number(process.env.HORARIO_FIM || 22);
 const TIMEZONE = process.env.TIMEZONE || "America/Sao_Paulo";
@@ -46,13 +47,14 @@ function dentroDoHorario() {
 // Dentro do horario: passa o numero direto.
 // Fora do horario: orienta a mandar mensagem para ser respondido depois.
 function linhaContato() {
+  const linhaEmail = EMAIL_EMPRESA ? `\nEmail: ${EMAIL_EMPRESA}` : "";
   if (dentroDoHorario()) {
-    return `Fale com ${NOME_SUPORTE} no WhatsApp: ${WHATSAPP_PEDRO}`;
+    return `Fale com ${NOME_SUPORTE}:\nWhatsApp: ${WHATSAPP_PEDRO}${linhaEmail}`;
   }
   return (
     `Nosso atendimento humano funciona das ${HORARIO_INICIO}h as ${HORARIO_FIM}h.\n` +
-    `Voce pode mandar uma mensagem no WhatsApp de ${NOME_SUPORTE} (${WHATSAPP_PEDRO}) ` +
-    `que ele responde assim que estiver disponivel.`
+    `Mande uma mensagem para ${NOME_SUPORTE} que ele responde assim que estiver disponivel:\n` +
+    `WhatsApp: ${WHATSAPP_PEDRO}${linhaEmail}`
   );
 }
 
