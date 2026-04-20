@@ -31,15 +31,24 @@ const SETORES = [
     preco: 50.00,
     prompt: require("./prompts/contrato_aluguel"),
   },
+  {
+    numero: 4,
+    nome: "Suporte",
+    tipo: "suporte",
+    preco: 0,
+    prompt: require("./prompts/suporte"),
+  },
 ];
 
 // Monta o texto do menu que e enviado ao cliente
 function textoMenu() {
-  const linhas = SETORES.map(
-    (s) => `${s.numero}) ${s.nome} — R$ ${s.preco.toFixed(2).replace(".", ",")}`
-  );
+  const linhas = SETORES.map((s) => {
+    if (s.preco > 0) {
+      return `${s.numero}) ${s.nome} \u2014 R$ ${s.preco.toFixed(2).replace(".", ",")}`;
+    }
+    return `${s.numero}) ${s.nome}`;
+  });
   return (
-    "Oi! Seja bem-vindo(a) a Crie Seu Contrato.\n" +
     "Aqui voce tira seu documento de um jeito rapido e facil, sem sair de casa.\n\n" +
     "Qual documento voce precisa hoje?\n\n" +
     linhas.join("\n") +
