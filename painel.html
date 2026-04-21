@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Crie Seu Contrato — Painel de Controle</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f0f2f5;color:#1a1a2e;min-height:100vh}
+
+    /* ── Header ── */
+    header{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);color:#fff;padding:0 32px;display:flex;align-items:stretch;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+    .header-brand{display:flex;align-items:center;gap:10px;padding:16px 0;margin-right:32px}
+    .header-brand h1{font-size:1.15rem;font-weight:700;letter-spacing:.5px}
+    .header-brand span{font-size:.8rem;opacity:.5}
+
+    nav{display:flex;gap:2px}
+    nav button{background:none;border:none;color:rgba(255,255,255,.65);padding:0 20px;font-size:.9rem;cursor:pointer;border-bottom:3px solid transparent;transition:all .15s;white-space:nowrap}
+    nav button:hover{color:#fff;background:rgba(255,255,255,.07)}
+    nav button.ativo{color:#fff;border-bottom-color:#6c63ff;background:rgba(108,99,255,.15)}
+
+    /* ── Layout ── */
+    .aba{display:none;max-width:1100px;margin:0 auto;padding:28px 16px}
+    .aba.ativa{display:block}
+
+    /* ── Cards ── */
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:28px}
+    .card{background:#fff;border-radius:12px;padding:20px 24px;box-shadow:0 1px 4px rgba(0,0,0,.08);border-left:4px solid transparent}
+    .card.green{border-color:#2ecc71}.card.blue{border-color:#3498db}.card.purple{border-color:#9b59b6}.card.orange{border-color:#e67e22}.card.teal{border-color:#1abc9c}
+    .card-label{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#aaa;margin-bottom:8px}
+    .card-value{font-size:1.8rem;font-weight:700;color:#1a1a2e}
+    .card-sub{font-size:.8rem;color:#888;margin-top:4px}
+
+    .section-title{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#aaa;margin:28px 0 14px;display:flex;align-items:center;gap:8px}
+    .section-title::after{content:"";flex:1;height:1px;background:#e0e0e0}
+
+    .panel{background:#fff;border-radius:12px;padding:24px 28px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:20px}
+    .panel h2{font-size:1rem;font-weight:700;margin-bottom:18px;color:#16213e}
+
+    /* ── Formulario ── */
+    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .form-grid.col3{grid-template-columns:1fr 1fr 1fr}
+    .form-grid.col1{grid-template-columns:1fr}
+    @media(max-width:600px){.form-grid,.form-grid.col3{grid-template-columns:1fr}}
+    label{display:block;font-size:.82rem;font-weight:600;color:#555;margin-bottom:5px;margin-top:12px}
+    label.req::after{content:" *";color:#e74c3c}
+    input,select,textarea{width:100%;padding:9px 12px;border:1px solid #d0d4da;border-radius:6px;font-size:.92rem;font-family:inherit;background:#fff;transition:border-color .15s}
+    input:focus,select:focus,textarea:focus{outline:none;border-color:#6c63ff;box-shadow:0 0 0 3px rgba(108,99,255,.12)}
+    textarea{resize:vertical;min-height:90px;font-size:.88rem}
+    .hint{font-size:.72rem;color:#999;margin-top:3px}
+    .subsection{font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:700;margin:20px 0 4px;padding-bottom:4px;border-bottom:1px solid #eee}
+
+    /* ── Botoes ── */
+    .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 22px;border-radius:8px;font-size:.9rem;font-weight:600;cursor:pointer;border:none;transition:background .15s}
+    .btn-primary{background:#6c63ff;color:#fff}.btn-primary:hover:not(:disabled){background:#5a52e0}
+    .btn-secondary{background:#95a5a6;color:#fff}.btn-secondary:hover:not(:disabled){background:#7f8c8d}
+    .btn-danger{background:#e74c3c;color:#fff}.btn-danger:hover:not(:disabled){background:#c0392b}
+    .btn-sm{padding:6px 14px;font-size:.82rem}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .actions{display:flex;gap:10px;align-items:center;margin-top:20px;padding-top:18px;border-top:1px solid #eee;flex-wrap:wrap}
+
+    /* ── Alertas ── */
+    .alert{padding:12px 16px;border-radius:8px;font-size:.88rem;margin-top:14px;display:none}
+    .alert.ok{background:#d4edda;color:#155724;display:block}
+    .alert.err{background:#f8d7da;color:#721c24;display:block}
+    .alert.load{background:#cfe2ff;color:#084298;display:block}
+    .alert a{color:inherit;font-weight:700}
+
+    /* ── Clausulas ── */
+    .clausula-item{background:#f8f9fa;border-radius:8px;padding:16px;margin-bottom:12px;border:1px solid #e9ecef}
+    .clausula-titulo{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+    .clausula-titulo input{font-weight:700;font-size:.9rem;border:none;background:transparent;padding:0;width:100%;color:#16213e}
+    .clausula-titulo input:focus{outline:none;border-bottom:1px solid #6c63ff}
+    .clausula-titulo span{font-size:.72rem;color:#aaa;white-space:nowrap}
+
+    /* ── Chart ── */
+    .chart-wrap{position:relative;height:220px}
+    .tipo-badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.75rem;font-weight:700;margin:2px}
+    .tipo-badge.declaracao{background:#e8f5e9;color:#2e7d32}
+    .tipo-badge.recibo{background:#e3f2fd;color:#1565c0}
+    .tipo-badge.contrato{background:#fce4ec;color:#880e4f}
+
+    /* ── Gerar tab ── */
+    #form-campos input,#form-campos select,#form-campos textarea{margin:0}
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-brand">
+    <div>
+      <h1>Crie Seu Contrato</h1>
+      <span>Painel de Controle</span>
+    </div>
+  </div>
+  <nav>
+    <button class="ativo" onclick="trocarAba('dashboard',this)">📊 Dashboard</button>
+    <button onclick="trocarAba('gerar',this)">📄 Gerar Documento</button>
+    <button onclick="trocarAba('config',this)">⚙️ Configurações</button>
+    <button onclick="trocarAba('clausulas',this)">📝 Cláusulas</button>
+  </nav>
+</header>
+
+<!-- ══════════════════ ABA: DASHBOARD ══════════════════ -->
+<div id="aba-dashboard" class="aba ativa">
+  <div class="cards" id="cards-resumo">
+    <div class="card green"><div class="card-label">Total de Documentos</div><div class="card-value" id="v-total">—</div></div>
+    <div class="card blue"><div class="card-label">Faturamento Total</div><div class="card-value" id="v-fat">—</div></div>
+    <div class="card purple"><div class="card-label">Ticket Médio</div><div class="card-value" id="v-ticket">—</div></div>
+    <div class="card orange"><div class="card-label">Últimos 7 dias</div><div class="card-value" id="v-7d">—</div><div class="card-sub" id="v-7d-fat"></div></div>
+    <div class="card teal"><div class="card-label">Clientes Únicos</div><div class="card-value" id="v-clientes">—</div></div>
+  </div>
+
+  <div class="section-title">Por tipo de documento</div>
+  <div class="cards" id="cards-tipo"></div>
+
+  <div class="section-title">Últimos 30 dias</div>
+  <div class="panel"><div class="chart-wrap"><canvas id="grafico-dias"></canvas></div></div>
+
+  <div class="section-title">Uso e custo do Gemini</div>
+  <div class="cards">
+    <div class="card blue"><div class="card-label">Chamadas totais</div><div class="card-value" id="g-chamadas">—</div></div>
+    <div class="card green"><div class="card-label">Tokens entrada</div><div class="card-value" id="g-entrada">—</div></div>
+    <div class="card purple"><div class="card-label">Tokens saída</div><div class="card-value" id="g-saida">—</div></div>
+    <div class="card orange"><div class="card-label">Custo estimado (USD)</div><div class="card-value" id="g-custo">—</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════ ABA: GERAR ══════════════════ -->
+<div id="aba-gerar" class="aba">
+  <div class="panel">
+    <h2>Gerar documento manualmente</h2>
+    <label class="req" for="tipo-doc">Tipo de documento</label>
+    <select id="tipo-doc" onchange="renderizarFormDoc()">
+      <option value="">-- selecione --</option>
+      <option value="declaracao">Declaração de Residência</option>
+      <option value="recibo">Recibo de Pagamento</option>
+      <option value="contrato">Contrato de Locação Residencial</option>
+    </select>
+    <div id="form-campos"></div>
+    <div class="actions" id="acoes-gerar" style="display:none">
+      <button class="btn btn-primary" id="btn-gerar" onclick="gerarDoc()">Gerar PDF</button>
+      <button class="btn btn-secondary" onclick="limparFormDoc()">Limpar</button>
+    </div>
+    <div class="alert" id="msg-gerar"></div>
+  </div>
+</div>
+
+<!-- ══════════════════ ABA: CONFIGURAÇÕES ══════════════════ -->
+<div id="aba-config" class="aba">
+  <div class="panel">
+    <h2>⚙️ Configurações do Sistema</h2>
+    <p style="font-size:.85rem;color:#666;margin-bottom:4px">Alterações entram em vigor imediatamente. Serão mantidas até o próximo redeploy.</p>
+
+    <div class="subsection">Preços dos serviços</div>
+    <div class="form-grid col3">
+      <div><label>Declaração de Residência (R$)</label><input type="number" id="cfg-preco_declaracao" step="0.01" min="0"></div>
+      <div><label>Recibo de Pagamento (R$)</label><input type="number" id="cfg-preco_recibo" step="0.01" min="0"></div>
+      <div><label>Contrato de Aluguel (R$)</label><input type="number" id="cfg-preco_contrato" step="0.01" min="0"></div>
+    </div>
+
+    <div class="subsection">Contato do suporte</div>
+    <div class="form-grid">
+      <div><label>Nome do responsável pelo suporte</label><input type="text" id="cfg-nome_suporte"></div>
+      <div><label>WhatsApp do suporte</label><input type="text" id="cfg-whatsapp_suporte" placeholder="(81) 99999-0000"></div>
+    </div>
+    <div><label>E-mail da empresa</label><input type="email" id="cfg-email_empresa" placeholder="contato@empresa.com.br"></div>
+
+    <div class="subsection">Horário de atendimento</div>
+    <div class="form-grid col3">
+      <div><label>Hora de início</label><input type="number" id="cfg-horario_inicio" min="0" max="23"></div>
+      <div><label>Hora de fim</label><input type="number" id="cfg-horario_fim" min="0" max="23"></div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" onclick="salvarConfig()">Salvar configurações</button>
+      <button class="btn btn-secondary" onclick="carregarConfig()">Descartar alterações</button>
+    </div>
+    <div class="alert" id="msg-config"></div>
+  </div>
+</div>
+
+<!-- ══════════════════ ABA: CLÁUSULAS ══════════════════ -->
+<div id="aba-clausulas" class="aba">
+  <div class="panel">
+    <h2>📝 Cláusulas do Contrato de Aluguel</h2>
+    <p style="font-size:.85rem;color:#666;margin-bottom:16px">
+      Edite os títulos e textos das cláusulas. Use <code>{{variavel}}</code> para inserir dados dinâmicos.<br>
+      <strong>Variáveis disponíveis:</strong>
+      <code>{{imovel_endereco}}</code> <code>{{prazo_meses}}</code> <code>{{data_inicio_ext}}</code> <code>{{data_fim_ext}}</code>
+      <code>{{valor_aluguel_fmt}}</code> <code>{{valor_aluguel_ext}}</code> <code>{{dia_vencimento}}</code>
+      <code>{{forma_pagamento}}</code> <code>{{multa_alugueis}}</code> <code>{{comarca}}</code>
+      <code>{{locador_nome}}</code> <code>{{locatario_nome}}</code>
+    </p>
+    <div id="lista-clausulas"></div>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="salvarClausulas()">Salvar cláusulas</button>
+      <button class="btn btn-danger btn-sm" onclick="resetarClausulas()">Restaurar padrão</button>
+    </div>
+    <div class="alert" id="msg-clausulas"></div>
+  </div>
+</div>
+
+<script>
+const secret = new URLSearchParams(location.search).get("secret") || "";
+const api = (path, opts) => fetch(`${path}?secret=${encodeURIComponent(secret)}`, opts).then(r => r.json());
+
+// ─── ABAS ────────────────────────────────────────────────
+function trocarAba(id, btn) {
+  document.querySelectorAll(".aba").forEach(a => a.classList.remove("ativa"));
+  document.querySelectorAll("nav button").forEach(b => b.classList.remove("ativo"));
+  document.getElementById("aba-" + id).classList.add("ativa");
+  btn.classList.add("ativo");
+  if (id === "dashboard") carregarDashboard();
+  if (id === "config") carregarConfig();
+  if (id === "clausulas") carregarClausulas();
+}
+
+// ─── DASHBOARD ───────────────────────────────────────────
+const BRL = v => "R$ " + Number(v||0).toLocaleString("pt-BR",{minimumFractionDigits:2});
+const NUM = v => Number(v||0).toLocaleString("pt-BR");
+let graficoRef = null;
+
+async function carregarDashboard() {
+  try {
+    const [d, g] = await Promise.all([
+      api("/admin/dashboard"),
+      api("/admin/gemini"),
+    ]);
+
+    document.getElementById("v-total").textContent   = NUM(d.total_vendas);
+    document.getElementById("v-fat").textContent     = BRL(d.faturamento_total);
+    document.getElementById("v-ticket").textContent  = BRL(d.ticket_medio);
+    document.getElementById("v-7d").textContent      = NUM(d.ultimos_7dias?.vendas);
+    document.getElementById("v-7d-fat").textContent  = BRL(d.ultimos_7dias?.faturamento);
+    document.getElementById("v-clientes").textContent = NUM(d.clientes_unicos);
+
+    // Cards por tipo
+    const cores = {declaracao:"green",recibo:"blue",contrato:"purple"};
+    const nomes = {declaracao:"Declarações",recibo:"Recibos",contrato:"Contratos"};
+    const ct = document.getElementById("cards-tipo");
+    ct.innerHTML = Object.entries(d.por_tipo||{}).map(([t,v]) =>
+      `<div class="card ${cores[t]||'gray'}">
+        <div class="card-label">${nomes[t]||t}</div>
+        <div class="card-value">${NUM(v.vendas)}</div>
+        <div class="card-sub">${BRL(v.faturamento)}</div>
+      </div>`
+    ).join("") || "<p style='color:#aaa;font-size:.85rem'>Nenhum documento gerado ainda.</p>";
+
+    // Gráfico de dias
+    const dias  = Object.keys(d.por_dia||{}).sort();
+    const vals  = dias.map(k => d.por_dia[k].vendas);
+    const fats  = dias.map(k => d.por_dia[k].faturamento);
+    if (graficoRef) graficoRef.destroy();
+    graficoRef = new Chart(document.getElementById("grafico-dias"), {
+      type: "bar",
+      data: {
+        labels: dias.map(d => d.slice(5)),
+        datasets: [
+          { label: "Documentos", data: vals, backgroundColor: "rgba(108,99,255,.7)", yAxisID: "y" },
+          { label: "Faturamento (R$)", data: fats, type:"line", borderColor:"#2ecc71", backgroundColor:"rgba(46,204,113,.1)", fill:true, yAxisID:"y2", tension:.4 },
+        ],
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        scales:{
+          y:{beginAtZero:true,ticks:{stepSize:1},grid:{color:"#f0f0f0"}},
+          y2:{position:"right",beginAtZero:true,grid:{drawOnChartArea:false}},
+        },
+        plugins:{legend:{labels:{font:{size:11}}}},
+      },
+    });
+
+    // Gemini
+    document.getElementById("g-chamadas").textContent = NUM(g.total_chamadas);
+    document.getElementById("g-entrada").textContent  = NUM(g.total_tokens_entrada);
+    document.getElementById("g-saida").textContent    = NUM(g.total_tokens_saida);
+    document.getElementById("g-custo").textContent    = "$ " + Number(g.custo_estimado_usd||0).toFixed(4);
+  } catch(e) {
+    console.error("Dashboard:", e);
+  }
+}
+
+// ─── GERAR DOCUMENTO ─────────────────────────────────────
+const HOJE = new Date().toISOString().slice(0,10);
+const CAMPOS_DOC = {
+  declaracao: [
+    {s:"Dados do declarante"},
+    {n:"nome",l:"Nome completo",t:"text",req:true},
+    {n:"nacionalidade",l:"Nacionalidade",t:"text",def:"Brasileiro(a)"},
+    {n:"estado_civil",l:"Estado civil",t:"text",ph:"solteiro(a), casado(a)..."},
+    {n:"profissao",l:"Profissão",t:"text"},
+    {s:"Documentos"},
+    {n:"rg",l:"RG",t:"text"},{n:"orgao_expedidor",l:"Órgão expedidor",t:"text",ph:"SSP/SP"},
+    {n:"cpf",l:"CPF",t:"text",req:true},
+    {s:"Endereço"},
+    {n:"endereco",l:"Endereço",t:"text",req:true,ph:"Rua, número, complemento, bairro"},
+    {n:"cidade",l:"Cidade",t:"text",req:true},{n:"estado",l:"UF",t:"text",ph:"SP",max:2},{n:"cep",l:"CEP",t:"text"},
+    {s:"Data"},{n:"data",l:"Data da declaração",t:"date",def:HOJE},
+  ],
+  recibo: [
+    {s:"Pagador"},{n:"pagador",l:"Nome do pagador",t:"text",req:true},{n:"cpf_pagador",l:"CPF/CNPJ do pagador",t:"text"},
+    {s:"Recebedor"},{n:"recebedor",l:"Nome do recebedor",t:"text",req:true},{n:"cpf_recebedor",l:"CPF/CNPJ do recebedor",t:"text"},
+    {s:"Pagamento"},
+    {n:"valor",l:"Valor (R$)",t:"number",req:true,ph:"1500.00",step:"0.01"},
+    {n:"descricao",l:"Referente a",t:"textarea",req:true,ph:"ex: aluguel de abril..."},
+    {s:"Local e data"},{n:"cidade",l:"Cidade",t:"text"},{n:"estado",l:"UF",t:"text",ph:"SP",max:2},
+    {n:"data",l:"Data do recibo",t:"date",def:HOJE},
+  ],
+  contrato: [
+    {s:"Locador (dono do imóvel)"},
+    {n:"locador_nome",l:"Nome completo",t:"text",req:true},
+    {n:"locador_nacionalidade",l:"Nacionalidade",t:"text",def:"brasileiro(a)"},
+    {n:"locador_estado_civil",l:"Estado civil",t:"text",ph:"solteiro(a), casado(a)..."},
+    {n:"locador_profissao",l:"Profissão",t:"text"},
+    {n:"locador_rg",l:"RG",t:"text"},{n:"locador_orgao_exp",l:"Órgão expedidor RG",t:"text",ph:"SSP/SP"},
+    {n:"locador_cpf",l:"CPF",t:"text",req:true},
+    {n:"locador_endereco",l:"Endereço residencial",t:"text",ph:"Rua, número, bairro, cidade - UF"},
+    {s:"Locatário (inquilino)"},
+    {n:"locatario_nome",l:"Nome completo",t:"text",req:true},
+    {n:"locatario_nacionalidade",l:"Nacionalidade",t:"text",def:"brasileiro(a)"},
+    {n:"locatario_estado_civil",l:"Estado civil",t:"text",ph:"solteiro(a), casado(a)..."},
+    {n:"locatario_profissao",l:"Profissão",t:"text"},
+    {n:"locatario_rg",l:"RG",t:"text"},{n:"locatario_orgao_exp",l:"Órgão expedidor RG",t:"text",ph:"SSP/SP"},
+    {n:"locatario_cpf",l:"CPF",t:"text",req:true},
+    {s:"Imóvel"},
+    {n:"imovel_endereco",l:"Endereço do imóvel",t:"textarea",req:true,ph:"Rua, número, complemento, bairro, cidade - UF"},
+    {s:"Condições do contrato"},
+    {n:"valor_aluguel",l:"Valor do aluguel (R$)",t:"number",req:true,step:"0.01"},
+    {n:"dia_vencimento",l:"Dia de vencimento",t:"number",req:true,ph:"10",min:1,max:31},
+    {n:"forma_pagamento",l:"Forma de pagamento",t:"text",ph:"PIX, transferência..."},
+    {n:"prazo_meses",l:"Prazo (meses)",t:"number",req:true,ph:"12",min:1},
+    {n:"data_inicio",l:"Data de início",t:"date",req:true,def:HOJE},
+    {n:"multa_alugueis",l:"Multa rescisória (nº de aluguéis)",t:"number",def:3,min:1,hint:"Padrão: 3"},
+    {s:"Foro e assinatura"},
+    {n:"comarca",l:"Comarca (cidade do foro)",t:"text"},
+    {n:"cidade",l:"Cidade da assinatura",t:"text"},
+    {n:"estado",l:"UF",t:"text",ph:"PE",max:2},
+    {n:"data_assinatura",l:"Data da assinatura",t:"date",def:HOJE},
+  ],
+};
+
+function renderizarFormDoc() {
+  const tipo = document.getElementById("tipo-doc").value;
+  const cont = document.getElementById("form-campos");
+  document.getElementById("acoes-gerar").style.display = tipo ? "flex" : "none";
+  document.getElementById("msg-gerar").className = "alert";
+  if (!tipo) { cont.innerHTML = ""; return; }
+  let html = "";
+  for (const c of CAMPOS_DOC[tipo]) {
+    if (c.s) { html += `<div class="subsection">${c.s}</div>`; continue; }
+    const attrs = [
+      c.req ? "required" : "",
+      c.ph ? `placeholder="${c.ph}"` : "",
+      c.max ? `maxlength="${c.max}"` : "",
+      c.step ? `step="${c.step}"` : "",
+      c.min != null ? `min="${c.min}"` : "",
+      c.max_n != null ? `max="${c.max_n}"` : "",
+      c.def != null ? `value="${c.def}"` : "",
+    ].filter(Boolean).join(" ");
+    const lbl = `<label class="${c.req?"req":""}" for="fd_${c.n}">${c.l}</label>`;
+    const inp = c.t === "textarea"
+      ? `<textarea id="fd_${c.n}" name="${c.n}" ${c.req?"required":""} placeholder="${c.ph||""}"></textarea>`
+      : `<input id="fd_${c.n}" type="${c.t}" name="${c.n}" ${attrs}>`;
+    html += `<div>${lbl}${inp}${c.hint?`<div class="hint">${c.hint}</div>`:""}</div>`;
+  }
+  cont.innerHTML = html;
+}
+
+function coletarDadosDoc(tipo) {
+  const dados = {};
+  for (const c of CAMPOS_DOC[tipo]) {
+    if (c.s) continue;
+    const el = document.getElementById(`fd_${c.n}`);
+    if (!el) continue;
+    let v = el.value.trim();
+    if (c.t === "number" && v !== "") v = Number(v);
+    if (v === "" && c.def !== undefined) v = c.def;
+    if (v !== "") dados[c.n] = v;
+  }
+  return dados;
+}
+
+async function gerarDoc() {
+  const tipo = document.getElementById("tipo-doc").value;
+  const msg  = document.getElementById("msg-gerar");
+  const btn  = document.getElementById("btn-gerar");
+  if (!tipo) return;
+  for (const el of document.getElementById("form-campos").querySelectorAll("[required]")) {
+    if (!el.value.trim()) {
+      el.focus();
+      msg.className = "alert err";
+      msg.textContent = "Preencha: " + (el.previousElementSibling?.textContent||el.name).replace(" *","");
+      return;
+    }
+  }
+  btn.disabled = true;
+  msg.className = "alert load"; msg.textContent = "Gerando PDF...";
+  try {
+    const r = await fetch(`/admin/gerar?secret=${encodeURIComponent(secret)}`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ tipo, dados: coletarDadosDoc(tipo) }),
+    }).then(r=>r.json());
+    if (!r.sucesso) throw new Error(r.erro||"Falha");
+    msg.className = "alert ok";
+    msg.innerHTML = `PDF gerado: <strong>${r.nomeArquivo}</strong> — <a href="${r.url_download}" target="_blank">Baixar agora ↗</a>`;
+    window.open(r.url_download,"_blank");
+  } catch(e) {
+    msg.className = "alert err"; msg.textContent = "Erro: " + e.message;
+  } finally { btn.disabled = false; }
+}
+
+function limparFormDoc() {
+  document.getElementById("tipo-doc").value = "";
+  renderizarFormDoc();
+}
+
+// ─── CONFIGURAÇÕES ───────────────────────────────────────
+async function carregarConfig() {
+  try {
+    const cfg = await api("/admin/config");
+    for (const [k,v] of Object.entries(cfg)) {
+      const el = document.getElementById("cfg-" + k);
+      if (el) el.value = v;
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function salvarConfig() {
+  const campos = ["preco_declaracao","preco_recibo","preco_contrato","nome_suporte","whatsapp_suporte","email_empresa","horario_inicio","horario_fim"];
+  const dados = {};
+  for (const c of campos) {
+    const el = document.getElementById("cfg-" + c);
+    if (el) dados[c] = el.value;
+  }
+  const msg = document.getElementById("msg-config");
+  msg.className = "alert load"; msg.textContent = "Salvando...";
+  try {
+    const r = await fetch(`/admin/config?secret=${encodeURIComponent(secret)}`, {
+      method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(dados),
+    }).then(r=>r.json());
+    if (!r.sucesso) throw new Error(r.erro);
+    msg.className = "alert ok"; msg.textContent = "✅ Configurações salvas com sucesso!";
+    setTimeout(() => { msg.className = "alert"; }, 3000);
+  } catch(e) {
+    msg.className = "alert err"; msg.textContent = "Erro: " + e.message;
+  }
+}
+
+// ─── CLÁUSULAS ───────────────────────────────────────────
+async function carregarClausulas() {
+  const lista = document.getElementById("lista-clausulas");
+  lista.innerHTML = "<p style='color:#aaa'>Carregando...</p>";
+  try {
+    const clausulas = await api("/admin/clausulas");
+    lista.innerHTML = clausulas.map((c, i) => `
+      <div class="clausula-item">
+        <div class="clausula-titulo">
+          <input type="text" id="cl-titulo-${i}" value="${escHtml(c.titulo)}" style="font-weight:700;font-size:.88rem">
+          <span>#${i+1}</span>
+        </div>
+        <textarea id="cl-texto-${i}" rows="4">${escHtml(c.texto)}</textarea>
+      </div>
+    `).join("");
+  } catch(e) {
+    lista.innerHTML = `<p style="color:#e74c3c">Erro ao carregar: ${e.message}</p>`;
+  }
+}
+
+async function salvarClausulas() {
+  const msg = document.getElementById("msg-clausulas");
+  const items = document.querySelectorAll(".clausula-item");
+  const clausulas = Array.from(items).map((_,i) => ({
+    titulo: document.getElementById(`cl-titulo-${i}`).value.trim(),
+    texto:  document.getElementById(`cl-texto-${i}`).value.trim(),
+  }));
+  msg.className = "alert load"; msg.textContent = "Salvando...";
+  try {
+    const r = await fetch(`/admin/clausulas?secret=${encodeURIComponent(secret)}`, {
+      method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(clausulas),
+    }).then(r=>r.json());
+    if (!r.sucesso) throw new Error(r.erro);
+    msg.className = "alert ok"; msg.textContent = "✅ Cláusulas salvas! Próximos PDFs usarão o novo texto.";
+    setTimeout(() => { msg.className = "alert"; }, 4000);
+  } catch(e) {
+    msg.className = "alert err"; msg.textContent = "Erro: " + e.message;
+  }
+}
+
+async function resetarClausulas() {
+  if (!confirm("Restaurar todas as cláusulas para o texto padrão? Isso desfaz suas edições.")) return;
+  const msg = document.getElementById("msg-clausulas");
+  msg.className = "alert load"; msg.textContent = "Restaurando...";
+  try {
+    await fetch(`/admin/clausulas/reset?secret=${encodeURIComponent(secret)}`, { method:"POST" });
+    msg.className = "alert ok"; msg.textContent = "✅ Cláusulas restauradas para o padrão.";
+    await carregarClausulas();
+  } catch(e) {
+    msg.className = "alert err"; msg.textContent = "Erro: " + e.message;
+  }
+}
+
+function escHtml(str) {
+  return String(str||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+// ── Init ──────────────────────────────────────────────────
+carregarDashboard();
+</script>
+</body>
+</html>

@@ -13,6 +13,7 @@ const {
   dataPorExtenso,
   adicionarRodape,
 } = require("./utils");
+const { getClausulas, interpolar } = require("../clausulas-manager");
 
 // Calcula data de término a partir de data_inicio + prazo em meses
 function calcularDataFim(dataInicio, prazoMeses) {
@@ -79,67 +80,37 @@ function gerarContrato(dados, caminhoDestino) {
 
       doc.moveDown(1);
 
-      // ── Clausulas ───────────────────────────────────────────
-      function clausula(titulo, texto) {
+      // ── Clausulas (lidas do clausulas-manager — editaveis pelo painel) ──
+      const dataFim = dados.data_fim || calcularDataFim(dados.data_inicio, dados.prazo_meses);
+      const valorAluguel = Number(dados.valor_aluguel) || 0;
+
+      // Variaveis disponiveis nos templates de clausula
+      const varsClausula = {
+        ...dados,
+        locador_cpf_fmt:       formatarCpfCnpj(dados.locador_cpf),
+        locatario_cpf_fmt:     formatarCpfCnpj(dados.locatario_cpf),
+        valor_aluguel_fmt:     formatarMoeda(valorAluguel),
+        valor_aluguel_ext:     valorPorExtenso(valorAluguel),
+        data_inicio_ext:       dataPorExtenso(dados.data_inicio),
+        data_fim_ext:          dataPorExtenso(dataFim),
+        multa_alugueis:        dados.multa_alugueis || "3",
+        comarca:               dados.comarca || "________________",
+        forma_pagamento:       dados.forma_pagamento || "________________",
+        dia_vencimento:        dados.dia_vencimento || "__",
+        imovel_endereco:       dados.imovel_endereco || "________________",
+        prazo_meses:           dados.prazo_meses || "____",
+      };
+
+      function renderClausula(titulo, texto) {
         doc.font("Helvetica-Bold").text(titulo);
         doc.moveDown(0.2);
-        doc.font("Helvetica").text(texto, { align: "justify", lineGap: 3 });
+        doc.font("Helvetica").text(interpolar(texto, varsClausula), { align: "justify", lineGap: 3 });
         doc.moveDown(0.8);
       }
 
-      clausula(
-        "CL\u00c1USULA PRIMEIRA \u2013 DO OBJETO",
-        `O objeto deste contrato \u00e9 a loca\u00e7\u00e3o do im\u00f3vel residencial situado em ` +
-        `${dados.imovel_endereco || "________________"}. ` +
-        `O im\u00f3vel \u00e9 entregue em perfeitas condi\u00e7\u00f5es de conserva\u00e7\u00e3o e limpeza, ` +
-        `obrigando-se o LOCAT\u00c1RIO a restitu\u00ed-lo no mesmo estado.`
-      );
-
-      clausula(
-        "CL\u00c1USULA SEGUNDA \u2013 DA DESTINA\u00c7\u00c3O",
-        `O im\u00f3vel destina-se exclusivamente para fins residenciais do LOCAT\u00c1RIO e sua fam\u00edlia, ` +
-        `sendo vedada qualquer altera\u00e7\u00e3o de finalidade, bem como a subloca\u00e7\u00e3o, cess\u00e3o ou ` +
-        `empr\u00e9stimo do im\u00f3vel, total ou parcial, sem o consentimento pr\u00e9vio e por escrito do LOCADOR.`
-      );
-
-      const dataFim = dados.data_fim || calcularDataFim(dados.data_inicio, dados.prazo_meses);
-      clausula(
-        "CL\u00c1USULA TERCEIRA \u2013 DO PRAZO",
-        `A loca\u00e7\u00e3o ter\u00e1 o prazo de ${dados.prazo_meses || "____"} meses, ` +
-        `com in\u00edcio em ${dataPorExtenso(dados.data_inicio)} e t\u00e9rmino em ${dataPorExtenso(dataFim)}. ` +
-        `Findo este prazo, o LOCAT\u00c1RIO dever\u00e1 desocupar o im\u00f3vel, independentemente de ` +
-        `notifica\u00e7\u00e3o, sob pena de despejo.`
-      );
-
-      const valorAluguel = Number(dados.valor_aluguel) || 0;
-      clausula(
-        "CL\u00c1USULA QUARTA \u2013 DO ALUGUEL E ENCARGOS",
-        `O aluguel mensal \u00e9 de ${formatarMoeda(valorAluguel)} (${valorPorExtenso(valorAluguel)}), ` +
-        `a ser pago at\u00e9 o dia ${dados.dia_vencimento || "__"} de cada m\u00eas, ` +
-        `via ${dados.forma_pagamento || "________________"}. ` +
-        `Em caso de atraso, incidir\u00e1 multa de 10% sobre o valor devido e juros de mora de 1% ao m\u00eas.`
-      );
-
-      clausula(
-        "CL\u00c1USULA QUINTA \u2013 DAS BENFEITORIAS",
-        `Qualquer benfeitoria ou altera\u00e7\u00e3o no im\u00f3vel depender\u00e1 de autoriza\u00e7\u00e3o pr\u00e9via ` +
-        `por escrito do LOCADOR. As benfeitorias \u00fateis ou volunt\u00e1rias n\u00e3o dar\u00e3o direito a ` +
-        `reten\u00e7\u00e3o ou indeniza\u00e7\u00e3o, incorporando-se ao im\u00f3vel.`
-      );
-
-      const multaAlugueis = dados.multa_alugueis || "3";
-      clausula(
-        "CL\u00c1USULA SEXTA \u2013 DA MULTA RESCIS\u00d3RIA",
-        `A infra\u00e7\u00e3o de qualquer cl\u00e1usula deste contrato sujeita a parte infratora \u00e0 multa de ` +
-        `${multaAlugueis} alugu\u00e9is vigentes \u00e0 \u00e9poca da infra\u00e7\u00e3o, aplicada proporcionalmente ` +
-        `ao tempo restante do contrato, conforme o Art. 4\u00ba da Lei 8.245/91.`
-      );
-
-      clausula(
-        "CL\u00c1USULA S\u00c9TIMA \u2013 DO FORO",
-        `As partes elegem o foro da Comarca de ${dados.comarca || "________________"} para dirimir ` +
-        `quaisquer quest\u00f5es oriundas deste contrato.`
-      );
+      for (const c of getClausulas()) {
+        renderClausula(c.titulo, c.texto);
+      }
 
       // ── Local e data ────────────────────────────────────────
       const localData = dados.cidade

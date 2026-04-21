@@ -14,6 +14,8 @@
 //   PRECO_CONTRATO    — default: 50
 // ============================================================
 
+const { getConfig } = require("./config-manager");
+
 const PRECO_DECLARACAO = Number(process.env.PRECO_DECLARACAO) || 15;
 const PRECO_RECIBO     = Number(process.env.PRECO_RECIBO)     || 25;
 const PRECO_CONTRATO   = Number(process.env.PRECO_CONTRATO)   || 50;
@@ -50,11 +52,18 @@ const SETORES = [
   },
 ];
 
-// Monta o texto do menu que e enviado ao cliente
+// Monta o texto do menu que e enviado ao cliente (le precos frescos do config)
 function textoMenu() {
+  const cfg = getConfig();
+  const precosAtivos = {
+    declaracao: cfg.preco_declaracao,
+    recibo:     cfg.preco_recibo,
+    contrato:   cfg.preco_contrato,
+  };
   const linhas = SETORES.map((s) => {
-    if (s.preco > 0) {
-      return `${s.numero}) ${s.nome} \u2014 R$ ${s.preco.toFixed(2).replace(".", ",")}`;
+    const preco = precosAtivos[s.tipo] ?? s.preco;
+    if (preco > 0) {
+      return `${s.numero}) ${s.nome} \u2014 R$ ${preco.toFixed(2).replace(".", ",")}`;
     }
     return `${s.numero}) ${s.nome}`;
   });

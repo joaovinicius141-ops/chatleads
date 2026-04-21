@@ -14,6 +14,8 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { gerarDocumento } = require("./gerador");
+const { getConfig, saveConfig } = require("./config-manager");
+const { getClausulas, saveClausulas, DEFAULTS: CLAUSULAS_DEFAULTS } = require("./clausulas-manager");
 
 const PASTA_DOCUMENTOS = path.join(__dirname, "documentos_gerados");
 const PASTA_LOGS = path.join(__dirname, "logs");
@@ -206,6 +208,64 @@ function registrar(app, ADMIN_SECRET) {
       res.json(dados);
     } catch (e) {
       res.status(500).json({ erro: "Falha ao ler gemini_uso.json" });
+    }
+  });
+
+  // ─── CONFIGURACOES DINAMICAS ─────────────────────────────
+  app.get("/admin/config", auth, (_req, res) => res.json(getConfig()));
+
+  app.post("/admin/config", auth, (req, res) => {
+    try {
+      const { body } = req;
+      const campos = [
+        "preco_declaracao","preco_recibo","preco_contrato",
+        "nome_suporte","whatsapp_suporte","email_empresa",
+        "horario_inicio","horario_fim",
+      ];
+      const dados = {};
+      for (const campo of campos) {
+        if (body[campo] !== undefined) {
+          dados[campo] = ["preco_declaracao","preco_recibo","preco_contrato","horario_inicio","horario_fim"].includes(campo)
+            ? Number(body[campo])
+            : String(body[campo]);
+        }
+      }
+      const novo = saveConfig(dados);
+      console.log("[ADMIN] Config atualizada via painel");
+      res.json({ sucesso: true, config: novo });
+    } catch (e) {
+      res.status(500).json({ erro: e.message });
+    }
+  });
+
+  // ─── CLAUSULAS DO CONTRATO ────────────────────────────────
+  app.get("/admin/clausulas", auth, (_req, res) => res.json(getClausulas()));
+
+  app.post("/admin/clausulas", auth, (req, res) => {
+    try {
+      const clausulas = req.body;
+      if (!Array.isArray(clausulas) || clausulas.length === 0) {
+        return res.status(400).json({ erro: "Esperado array de clausulas" });
+      }
+      for (const c of clausulas) {
+        if (typeof c.titulo !== "string" || typeof c.texto !== "string") {
+          return res.status(400).json({ erro: "Cada clausula deve ter titulo e texto (string)" });
+        }
+      }
+      saveClausulas(clausulas);
+      console.log("[ADMIN] Clausulas atualizadas via painel");
+      res.json({ sucesso: true });
+    } catch (e) {
+      res.status(500).json({ erro: e.message });
+    }
+  });
+
+  app.post("/admin/clausulas/reset", auth, (_req, res) => {
+    try {
+      saveClausulas(CLAUSULAS_DEFAULTS.map((c) => ({ ...c })));
+      res.json({ sucesso: true });
+    } catch (e) {
+      res.status(500).json({ erro: e.message });
     }
   });
 

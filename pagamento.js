@@ -10,13 +10,23 @@ const crypto = require("crypto");
 
 const MP_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN || "";
 const { SETORES } = require("./setores");
+const { getConfig } = require("./config-manager");
 
-// Monta precos e descricoes dinamicamente a partir de setores.js
-const PRECOS = {};
+// Descricoes estaticas por tipo
 const DESCRICOES = {};
 for (const s of SETORES) {
-  PRECOS[s.tipo] = s.preco;
   DESCRICOES[s.tipo] = `${s.nome} - Crie Seu Contrato`;
+}
+
+// Precos dinamicos — lidos do config-manager a cada pagamento
+function getPreco(tipo) {
+  const cfg = getConfig();
+  const mapa = {
+    declaracao: cfg.preco_declaracao,
+    recibo:     cfg.preco_recibo,
+    contrato:   cfg.preco_contrato,
+  };
+  return mapa[tipo] ?? (SETORES.find((s) => s.tipo === tipo) || {}).preco;
 }
 
 // ------------------------------------------------------------
@@ -26,7 +36,7 @@ for (const s of SETORES) {
 async function criarCobrancaPix(tipo, psid) {
   if (!MP_TOKEN) throw new Error("MERCADOPAGO_ACCESS_TOKEN nao configurado");
 
-  const valor = PRECOS[tipo];
+  const valor = getPreco(tipo);
   if (!valor) throw new Error(`Tipo de documento sem preço definido: ${tipo}`);
 
   const webhookUrl = process.env.PUBLIC_URL

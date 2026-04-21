@@ -840,11 +840,11 @@ app.get("/aprovar-teste/:paymentId", async (req, res) => {
 // ─── ENDPOINTS ADMINISTRATIVOS ────────────────────────────────
 admin.registrar(app, ADMIN_SECRET);
 
-// ─── PAINEL VISUAL (dashboard.html) ───────────────────────────
+// ─── PAINEL UNIFICADO (painel.html) ───────────────────────────
 app.get("/admin/painel", (req, res) => {
   if (!ADMIN_SECRET) return res.status(503).send("ADMIN_SECRET nao configurado");
   if (!compararSeguro(req.query.secret, ADMIN_SECRET)) return res.status(403).send("Acesso negado");
-  res.sendFile(path.join(__dirname, "dashboard.html"));
+  res.sendFile(path.join(__dirname, "painel.html"));
 });
 
 // ─── GERADOR MANUAL DE DOCUMENTOS (gerar.html) ────────────────
