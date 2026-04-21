@@ -118,4 +118,4 @@ async function verificarPagamento(paymentId) {
   };
 }
 
-module.exports = { criarCobrancaPix, verificarPagamento, PRECOS };
+module.exports = { criarCobrancaPix, verificarPagamento };
