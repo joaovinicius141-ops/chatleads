@@ -1,7 +1,7 @@
 // ============================================================
 // documentos/contrato.js
-// Gera um Contrato de Locacao Residencial em PDF usando pdfkit.
-// Modelo simples baseado na Lei 8.245/91 (Lei do Inquilinato).
+// Gera um Contrato de Locação Residencial em PDF usando pdfkit.
+// Template baseado no modelo estruturado V2 da empresa.
 // ============================================================
 
 const fs = require("fs");
@@ -13,6 +13,14 @@ const {
   dataPorExtenso,
   adicionarRodape,
 } = require("./utils");
+
+// Calcula data de término a partir de data_inicio + prazo em meses
+function calcularDataFim(dataInicio, prazoMeses) {
+  if (!dataInicio) return null;
+  const d = new Date(dataInicio + "T00:00:00");
+  d.setMonth(d.getMonth() + Number(prazoMeses || 0));
+  return d.toISOString().slice(0, 10);
+}
 
 function gerarContrato(dados, caminhoDestino) {
   return new Promise((resolve, reject) => {
@@ -27,25 +35,31 @@ function gerarContrato(dados, caminhoDestino) {
       doc.moveTo(70, doc.y).lineTo(70 + larguraUtil, doc.y).stroke();
       doc.moveDown(0.5);
       doc.fontSize(16).font("Helvetica-Bold")
-        .text("CONTRATO DE LOCA\u00c7\u00c3O RESIDENCIAL", { align: "center" });
+        .text("CONTRATO DE LOCA\u00c7\u00c3O", { align: "center" });
       doc.moveDown(0.3);
       doc.moveTo(70, doc.y).lineTo(70 + larguraUtil, doc.y).stroke();
       doc.moveDown(1.2);
 
-      // ── Partes ──────────────────────────────────────────────
+      // ── Identificacao das partes ────────────────────────────
       doc.fontSize(12).font("Helvetica");
 
-      const rgLocador = dados.rg_locador
-        ? ` e RG n\u00ba ${dados.rg_locador}${dados.orgao_exp_locador ? ` ${dados.orgao_exp_locador}` : ""}`
+      const locadorRg = dados.locador_rg
+        ? ` e no RG sob o n\u00ba ${dados.locador_rg}${dados.locador_orgao_exp ? ` ${dados.locador_orgao_exp}` : ""}`
         : "";
-      const rgLocatario = dados.rg_locatario
-        ? ` e RG n\u00ba ${dados.rg_locatario}${dados.orgao_exp_locatario ? ` ${dados.orgao_exp_locatario}` : ""}`
+      const locatarioRg = dados.locatario_rg
+        ? ` e no RG sob o n\u00ba ${dados.locatario_rg}${dados.locatario_orgao_exp ? ` ${dados.locatario_orgao_exp}` : ""}`
         : "";
 
       doc.font("Helvetica-Bold").text("LOCADOR: ", { continued: true })
         .font("Helvetica").text(
-          `${dados.locador || "________________"}, inscrito(a) no CPF sob o n\u00ba ` +
-          `${formatarCpfCnpj(dados.cpf_locador) || "________________"}${rgLocador}.`,
+          `${dados.locador_nome || "________________"}, ` +
+          `${dados.locador_nacionalidade || "________________"}, ` +
+          `${dados.locador_estado_civil || "________________"}, ` +
+          `${dados.locador_profissao || "________________"}, ` +
+          `inscrito no RG sob o n\u00ba ${dados.locador_rg || "________________"}` +
+          `${dados.locador_orgao_exp ? ` ${dados.locador_orgao_exp}` : ""}` +
+          ` e no CPF sob o n\u00ba ${formatarCpfCnpj(dados.locador_cpf) || "________________"}, ` +
+          `residente e domiciliado em ${dados.locador_endereco || "________________"}.`,
           { align: "justify", lineGap: 2 }
         );
 
@@ -53,125 +67,111 @@ function gerarContrato(dados, caminhoDestino) {
 
       doc.font("Helvetica-Bold").text("LOCAT\u00c1RIO: ", { continued: true })
         .font("Helvetica").text(
-          `${dados.locatario || "________________"}, inscrito(a) no CPF sob o n\u00ba ` +
-          `${formatarCpfCnpj(dados.cpf_locatario) || "________________"}${rgLocatario}.`,
+          `${dados.locatario_nome || "________________"}, ` +
+          `${dados.locatario_nacionalidade || "________________"}, ` +
+          `${dados.locatario_estado_civil || "________________"}, ` +
+          `${dados.locatario_profissao || "________________"}, ` +
+          `inscrito no RG sob o n\u00ba ${dados.locatario_rg || "________________"}` +
+          `${dados.locatario_orgao_exp ? ` ${dados.locatario_orgao_exp}` : ""}` +
+          ` e no CPF sob o n\u00ba ${formatarCpfCnpj(dados.locatario_cpf) || "________________"}.`,
           { align: "justify", lineGap: 2 }
         );
 
       doc.moveDown(1);
-      doc.text(
-        "As partes acima identificadas t\u00eam, entre si, justo e contratado, o presente " +
-        "CONTRATO DE LOCA\u00c7\u00c3O RESIDENCIAL, que se regera pelas cl\u00e1usulas seguintes e pelas " +
-        "condi\u00e7\u00f5es descritas no presente instrumento.",
-        { align: "justify", lineGap: 3 }
-      );
-
-      doc.moveDown(0.8);
 
       // ── Clausulas ───────────────────────────────────────────
       function clausula(titulo, texto) {
         doc.font("Helvetica-Bold").text(titulo);
+        doc.moveDown(0.2);
         doc.font("Helvetica").text(texto, { align: "justify", lineGap: 3 });
-        doc.moveDown(0.7);
+        doc.moveDown(0.8);
       }
 
       clausula(
-        "CL\u00c1USULA 1\u00aa \u2014 DO OBJETO",
-        `O LOCADOR d\u00e1 em loca\u00e7\u00e3o ao LOCAT\u00c1RIO o im\u00f3vel residencial ` +
-        `situado em ${dados.endereco_imovel || "________________"}, ` +
-        `para fins exclusivamente residenciais.`
+        "CL\u00c1USULA PRIMEIRA \u2013 DO OBJETO",
+        `O objeto deste contrato \u00e9 a loca\u00e7\u00e3o do im\u00f3vel residencial situado em ` +
+        `${dados.imovel_endereco || "________________"}. ` +
+        `O im\u00f3vel \u00e9 entregue em perfeitas condi\u00e7\u00f5es de conserva\u00e7\u00e3o e limpeza, ` +
+        `obrigando-se o LOCAT\u00c1RIO a restitu\u00ed-lo no mesmo estado.`
       );
 
       clausula(
-        "CL\u00c1USULA 2\u00aa \u2014 DO PRAZO",
-        `A presente loca\u00e7\u00e3o ter\u00e1 o prazo de ${dados.duracao || "________"}, ` +
-        `com in\u00edcio em ${dataPorExtenso(dados.data_inicio)}, ` +
-        `podendo ser renovada mediante acordo entre as partes.`
+        "CL\u00c1USULA SEGUNDA \u2013 DA DESTINA\u00c7\u00c3O",
+        `O im\u00f3vel destina-se exclusivamente para fins residenciais do LOCAT\u00c1RIO e sua fam\u00edlia, ` +
+        `sendo vedada qualquer altera\u00e7\u00e3o de finalidade, bem como a subloca\u00e7\u00e3o, cess\u00e3o ou ` +
+        `empr\u00e9stimo do im\u00f3vel, total ou parcial, sem o consentimento pr\u00e9vio e por escrito do LOCADOR.`
+      );
+
+      const dataFim = dados.data_fim || calcularDataFim(dados.data_inicio, dados.prazo_meses);
+      clausula(
+        "CL\u00c1USULA TERCEIRA \u2013 DO PRAZO",
+        `A loca\u00e7\u00e3o ter\u00e1 o prazo de ${dados.prazo_meses || "____"} meses, ` +
+        `com in\u00edcio em ${dataPorExtenso(dados.data_inicio)} e t\u00e9rmino em ${dataPorExtenso(dataFim)}. ` +
+        `Findo este prazo, o LOCAT\u00c1RIO dever\u00e1 desocupar o im\u00f3vel, independentemente de ` +
+        `notifica\u00e7\u00e3o, sob pena de despejo.`
       );
 
       const valorAluguel = Number(dados.valor_aluguel) || 0;
       clausula(
-        "CL\u00c1USULA 3\u00aa \u2014 DO ALUGUEL",
-        `O valor mensal do aluguel \u00e9 de ${formatarMoeda(valorAluguel)} ` +
-        `(${valorPorExtenso(valorAluguel)}), a ser pago pelo LOCAT\u00c1RIO at\u00e9 o dia ` +
-        `${dados.dia_vencimento || "__"} de cada m\u00eas, por meio acordado entre as partes.`
-      );
-
-      const valorCaucao = Number(dados.valor_caucao) || 0;
-      if (valorCaucao > 0) {
-        clausula(
-          "CL\u00c1USULA 4\u00aa \u2014 DA CAU\u00c7\u00c3O",
-          `O LOCAT\u00c1RIO entregou ao LOCADOR, a t\u00edtulo de cau\u00e7\u00e3o, a quantia de ` +
-          `${formatarMoeda(valorCaucao)} (${valorPorExtenso(valorCaucao)}), que ser\u00e1 ` +
-          `restitu\u00edda ao final da loca\u00e7\u00e3o, desde que o im\u00f3vel seja devolvido nas ` +
-          `mesmas condi\u00e7\u00f5es em que foi recebido, e quitadas todas as obriga\u00e7\u00f5es contratuais.`
-        );
-      } else {
-        clausula(
-          "CL\u00c1USULA 4\u00aa \u2014 DA CAU\u00c7\u00c3O",
-          `A presente loca\u00e7\u00e3o n\u00e3o est\u00e1 sujeita a cau\u00e7\u00e3o, conforme acordado entre as partes.`
-        );
-      }
-
-      clausula(
-        "CL\u00c1USULA 5\u00aa \u2014 DAS OBRIGA\u00c7\u00d5ES DO LOCAT\u00c1RIO",
-        `O LOCAT\u00c1RIO compromete-se a: (a) pagar pontualmente o aluguel e as despesas ` +
-        `ordin\u00e1rias do im\u00f3vel (\u00e1gua, luz, g\u00e1s, taxas de condom\u00ednio e IPTU, quando ` +
-        `aplic\u00e1veis); (b) utilizar o im\u00f3vel exclusivamente para fins residenciais; ` +
-        `(c) conservar o im\u00f3vel em bom estado, respondendo pelos danos que der causa; ` +
-        `(d) devolver o im\u00f3vel, ao t\u00e9rmino da loca\u00e7\u00e3o, nas mesmas condi\u00e7\u00f5es em que o recebeu.`
+        "CL\u00c1USULA QUARTA \u2013 DO ALUGUEL E ENCARGOS",
+        `O aluguel mensal \u00e9 de ${formatarMoeda(valorAluguel)} (${valorPorExtenso(valorAluguel)}), ` +
+        `a ser pago at\u00e9 o dia ${dados.dia_vencimento || "__"} de cada m\u00eas, ` +
+        `via ${dados.forma_pagamento || "________________"}. ` +
+        `Em caso de atraso, incidir\u00e1 multa de 10% sobre o valor devido e juros de mora de 1% ao m\u00eas.`
       );
 
       clausula(
-        "CL\u00c1USULA 6\u00aa \u2014 DA RESCIS\u00c3O",
-        `A rescis\u00e3o do presente contrato, por qualquer das partes, observar\u00e1 as disposi\u00e7\u00f5es ` +
-        `da Lei n\u00ba 8.245/1991 (Lei do Inquilinato). Em caso de rescis\u00e3o antecipada por ` +
-        `iniciativa do LOCAT\u00c1RIO, aplicar-se-\u00e1 multa proporcional ao prazo restante, ` +
-        `conforme o Art. 4\u00ba da referida lei.`
+        "CL\u00c1USULA QUINTA \u2013 DAS BENFEITORIAS",
+        `Qualquer benfeitoria ou altera\u00e7\u00e3o no im\u00f3vel depender\u00e1 de autoriza\u00e7\u00e3o pr\u00e9via ` +
+        `por escrito do LOCADOR. As benfeitorias \u00fateis ou volunt\u00e1rias n\u00e3o dar\u00e3o direito a ` +
+        `reten\u00e7\u00e3o ou indeniza\u00e7\u00e3o, incorporando-se ao im\u00f3vel.`
+      );
+
+      const multaAlugueis = dados.multa_alugueis || "3";
+      clausula(
+        "CL\u00c1USULA SEXTA \u2013 DA MULTA RESCIS\u00d3RIA",
+        `A infra\u00e7\u00e3o de qualquer cl\u00e1usula deste contrato sujeita a parte infratora \u00e0 multa de ` +
+        `${multaAlugueis} alugu\u00e9is vigentes \u00e0 \u00e9poca da infra\u00e7\u00e3o, aplicada proporcionalmente ` +
+        `ao tempo restante do contrato, conforme o Art. 4\u00ba da Lei 8.245/91.`
       );
 
       clausula(
-        "CL\u00c1USULA 7\u00aa \u2014 DO FORO",
-        `As partes elegem o foro da comarca da situa\u00e7\u00e3o do im\u00f3vel para dirimir quaisquer ` +
-        `quest\u00f5es oriundas do presente contrato, com renuncia a qualquer outro, por mais privilegiado que seja.`
+        "CL\u00c1USULA S\u00c9TIMA \u2013 DO FORO",
+        `As partes elegem o foro da Comarca de ${dados.comarca || "________________"} para dirimir ` +
+        `quaisquer quest\u00f5es oriundas deste contrato.`
       );
 
-      doc.moveDown(0.5);
-      doc.text(
-        "E por estarem assim justas e contratadas, as partes firmam o presente instrumento " +
-        "em duas vias de igual teor e forma, na presen\u00e7a das testemunhas abaixo.",
-        { align: "justify", lineGap: 3 }
-      );
-
-      doc.moveDown(1);
-      const localData = dados.local_assinatura
-        ? `${dados.local_assinatura}, ${dataPorExtenso(dados.data_assinatura)}.`
+      // ── Local e data ────────────────────────────────────────
+      const localData = dados.cidade
+        ? `${dados.cidade}${dados.estado ? ` - ${dados.estado}` : ""}, ${dataPorExtenso(dados.data_assinatura)}.`
         : `${dataPorExtenso(dados.data_assinatura)}.`;
-      doc.text(localData, { align: "right" });
+      doc.fontSize(12).font("Helvetica").text(localData, { align: "right" });
 
-      // ── Assinaturas (lado a lado) ───────────────────────────
-      doc.moveDown(4);
-      const yAssinatura = doc.y;
-      const larguraAssinatura = 200;
-      const xEsquerda = 70 + (larguraUtil / 2 - larguraAssinatura) / 2;
-      const xDireita  = 70 + larguraUtil / 2 + (larguraUtil / 2 - larguraAssinatura) / 2;
+      // ── Assinaturas ─────────────────────────────────────────
+      doc.moveDown(3.5);
+      const yAss = doc.y;
+      const largAss = 200;
+      const xEsq = 70 + (larguraUtil / 2 - largAss) / 2;
+      const xDir = 70 + larguraUtil / 2 + (larguraUtil / 2 - largAss) / 2;
 
-      doc.moveTo(xEsquerda, yAssinatura).lineTo(xEsquerda + larguraAssinatura, yAssinatura).stroke();
-      doc.moveTo(xDireita,  yAssinatura).lineTo(xDireita  + larguraAssinatura, yAssinatura).stroke();
-
+      doc.moveTo(xEsq, yAss).lineTo(xEsq + largAss, yAss).stroke();
+      doc.moveTo(xDir, yAss).lineTo(xDir + largAss, yAss).stroke();
       doc.fontSize(10);
-      doc.text("LOCADOR", xEsquerda, yAssinatura + 6, { width: larguraAssinatura, align: "center" });
-      doc.text(dados.locador || "________________", xEsquerda, yAssinatura + 20, { width: larguraAssinatura, align: "center" });
-      doc.text(`CPF: ${formatarCpfCnpj(dados.cpf_locador) || ""}`, xEsquerda, yAssinatura + 34, { width: larguraAssinatura, align: "center" });
+      doc.text(`LOCADOR - ${dados.locador_nome || "________________"}`, xEsq, yAss + 6, { width: largAss, align: "center" });
+      doc.text(`LOCAT\u00c1RIO - ${dados.locatario_nome || "________________"}`, xDir, yAss + 6, { width: largAss, align: "center" });
 
-      doc.text("LOCAT\u00c1RIO", xDireita, yAssinatura + 6, { width: larguraAssinatura, align: "center" });
-      doc.text(dados.locatario || "________________", xDireita, yAssinatura + 20, { width: larguraAssinatura, align: "center" });
-      doc.text(`CPF: ${formatarCpfCnpj(dados.cpf_locatario) || ""}`, xDireita, yAssinatura + 34, { width: larguraAssinatura, align: "center" });
+      // ── Testemunhas ─────────────────────────────────────────
+      doc.moveDown(3);
+      const yTest = doc.y;
+      doc.moveTo(xEsq, yTest).lineTo(xEsq + largAss, yTest).stroke();
+      doc.moveTo(xDir, yTest).lineTo(xDir + largAss, yTest).stroke();
+      doc.text("Testemunha:", xEsq, yTest + 6, { width: largAss, align: "center" });
+      doc.text("Testemunha:", xDir, yTest + 6, { width: largAss, align: "center" });
 
       doc.fontSize(12);
 
       // ── Linha inferior + rodape ─────────────────────────────
-      doc.y = yAssinatura + 60;
+      doc.y = yTest + 30;
       doc.moveTo(70, doc.y).lineTo(70 + larguraUtil, doc.y).stroke();
 
       adicionarRodape(doc);
