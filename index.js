@@ -29,7 +29,7 @@ const geminiHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10 });
 
 const { gerarDocumento } = require("./gerador");
 const { criarCobrancaPix, verificarPagamento } = require("./pagamento");
-const { textoMenu, buscarSetor } = require("./setores");
+const { textoMenu, buscarSetor, PRECO_DECLARACAO, PRECO_RECIBO, PRECO_CONTRATO } = require("./setores");
 const { linhaContato, nomeSuporte } = require("./contato");
 
 const messenger = require("./canais/messenger");
@@ -67,6 +67,7 @@ console.log(`[CONFIG] ADMIN_SECRET: ${ADMIN_SECRET ? "configurado" : "NAO DEFINI
 console.log(`[CONFIG] WHATSAPP: ${whatsapp.ativo() ? "ativo" : "nao configurado"}`);
 console.log(`[CONFIG] NOME_SUPORTE: ${nomeSuporte()}`);
 console.log(`[CONFIG] EMAIL_EMPRESA: ${process.env.EMAIL_EMPRESA || "NAO DEFINIDO"}`);
+console.log(`[CONFIG] PRECOS: Declaracao=R$${PRECO_DECLARACAO} | Recibo=R$${PRECO_RECIBO} | Contrato=R$${PRECO_CONTRATO}`);
 if (MODO_TESTE) {
   console.warn("⚠️  [MODO_TESTE] ATIVO — pagamentos desativados, documentos entregues na hora!");
 }
@@ -593,26 +594,29 @@ async function revisarDocumento(userId, reclamacao, entrega, canal) {
 
   const promptRevisao =
     `Voce e um revisor de documentos da Crie Seu Contrato.\n` +
-    `Um cliente recebeu um documento do tipo "${entrega.tipo}" e esta relatando um problema.\n\n` +
-    `DADOS ORIGINAIS USADOS PARA GERAR O DOCUMENTO:\n${JSON.stringify(entrega.dados, null, 2)}\n\n` +
-    `HISTORICO DE MENSAGENS DO CLIENTE (em ordem cronologica):\n"${String(reclamacao).slice(0, 2000)}"\n\n` +
-    `INSTRUCAO IMPORTANTE: O cliente pode ter fornecido dados incorretos durante o atendimento.\n` +
-    `Se nas mensagens ele indica um dado diferente do que foi registrado (ex: nome completo, endereco), ` +
-    `trate isso como uma correcao valida — nao como "sem erro".\n\n` +
-    `SUA TAREFA:\n` +
-    `1. Compare os dados originais com o que o cliente esta dizendo agora\n` +
-    `2. Se o cliente forneceu a informacao correta nas mensagens, use-a para gerar a correcao\n` +
-    `3. Escolha EXATAMENTE UMA das tres opcoes abaixo\n\n` +
-    `OPCAO A — Os dados do documento estao corretos E o cliente nao forneceu nenhuma correcao nova:\n` +
+    `Um cliente recebeu um documento e esta solicitando uma correcao. Seu objetivo e SEMPRE tentar corrigir automaticamente.\n\n` +
+    `DADOS ORIGINAIS DO DOCUMENTO (tipo: ${entrega.tipo}):\n${JSON.stringify(entrega.dados, null, 2)}\n\n` +
+    `MENSAGENS DO CLIENTE (em ordem cronologica):\n"${String(reclamacao).slice(0, 2000)}"\n\n` +
+    `REGRAS FUNDAMENTAIS:\n` +
+    `- NUNCA use [ERRO_MANUAL] apenas porque o cliente nao forneceu o valor correto ainda.\n` +
+    `- Quando o cliente diz que algo esta errado mas nao informa o valor correto → use [SEM_ERRO] para PERGUNTAR.\n` +
+    `- Quando o cliente ja forneceu o valor correto (mesmo que separado em outra mensagem) → use [CORRECAO].\n` +
+    `- [ERRO_MANUAL] e reservado APENAS para casos que voce genuinamente nao pode resolver: pedido de reembolso, ` +
+    `troca de tipo de documento, problema tecnico de pagamento, etc.\n\n` +
+    `ESCOLHA EXATAMENTE UMA das tres opcoes abaixo:\n\n` +
+    `OPCAO A — Use quando precisar de mais informacoes do cliente para fazer a correcao:\n` +
+    `Exemplo: cliente disse "o CPF esta errado" mas nao informou o correto → pergunte qual e o CPF correto.\n` +
     `[SEM_ERRO]\n` +
-    `<mensagem empatica pedindo que o cliente detalhe melhor o que precisa corrigir>\n\n` +
-    `OPCAO B — Ha uma correcao clara e voce tem os dados necessarios (inclusive os que o cliente informou agora):\n` +
-    `[CORRECAO:{"tipo":"${entrega.tipo}","dados":{...JSON completo com TODOS os campos, corrigindo o necessario...}}]\n` +
-    `<mensagem breve e empatica explicando o que foi corrigido>\n` +
-    `IMPORTANTE: inclua TODOS os campos do JSON original. Corrija apenas o que o cliente pediu.\n\n` +
-    `OPCAO C — Ha um problema mas voce nao consegue corrigir automaticamente:\n` +
+    `<pergunta direta e empatica ao cliente — peca exatamente a informacao que falta para corrigir>\n\n` +
+    `OPCAO B — Use quando JA TEM todos os dados necessarios para corrigir (inclusive vindos das mensagens do cliente):\n` +
+    `Exemplo: cliente disse "o CPF deve ser 123.456.789-00" → corrija o campo e regenere.\n` +
+    `[CORRECAO:{"tipo":"${entrega.tipo}","dados":{...JSON COMPLETO com TODOS os campos, corrigindo apenas o necessario...}}]\n` +
+    `<mensagem breve e empatica confirmando o que foi corrigido>\n` +
+    `IMPORTANTE: inclua TODOS os campos do JSON original. Corrija APENAS o campo mencionado pelo cliente.\n\n` +
+    `OPCAO C — Use SOMENTE para problemas que voce genuinamente nao pode resolver automaticamente:\n` +
+    `(pedido de reembolso, troca de tipo de documento, cobranca duplicada, problema tecnico grave)\n` +
     `[ERRO_MANUAL]\n` +
-    `<explicacao breve>\n\n` +
+    `<descricao interna breve — nao exiba ao cliente>\n\n` +
     `Seja humano, breve e nunca exponha dados tecnicos ao cliente.`;
 
   try {
@@ -841,6 +845,13 @@ app.get("/admin/painel", (req, res) => {
   if (!ADMIN_SECRET) return res.status(503).send("ADMIN_SECRET nao configurado");
   if (!compararSeguro(req.query.secret, ADMIN_SECRET)) return res.status(403).send("Acesso negado");
   res.sendFile(path.join(__dirname, "dashboard.html"));
+});
+
+// ─── GERADOR MANUAL DE DOCUMENTOS (gerar.html) ────────────────
+app.get("/admin/gerar", (req, res) => {
+  if (!ADMIN_SECRET) return res.status(503).send("ADMIN_SECRET nao configurado");
+  if (!compararSeguro(req.query.secret, ADMIN_SECRET)) return res.status(403).send("Acesso negado");
+  res.sendFile(path.join(__dirname, "gerar.html"));
 });
 
 // ─── ROTINA DE LIMPEZA (30 DIAS) ──────────────────────────────

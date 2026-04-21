@@ -13,10 +13,13 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { gerarDocumento } = require("./gerador");
 
 const PASTA_DOCUMENTOS = path.join(__dirname, "documentos_gerados");
 const PASTA_LOGS = path.join(__dirname, "logs");
 const PASTA_RELATORIOS = path.join(__dirname, "relatorios");
+
+const TIPOS_VALIDOS = ["declaracao", "recibo", "contrato"];
 
 function compararSeguro(a, b) {
   const ba = Buffer.from(String(a || ""));
@@ -203,6 +206,45 @@ function registrar(app, ADMIN_SECRET) {
       res.json(dados);
     } catch (e) {
       res.status(500).json({ erro: "Falha ao ler gemini_uso.json" });
+    }
+  });
+
+  // ─── GERACAO MANUAL DE DOCUMENTOS ────────────────────────
+  // POST /admin/gerar  { tipo, dados }  → retorna { sucesso, url_download }
+  // Permite que o atendente gere documentos manualmente via painel.
+  app.post("/admin/gerar", auth, async (req, res) => {
+    try {
+      const { tipo, dados } = req.body || {};
+
+      if (!TIPOS_VALIDOS.includes(tipo)) {
+        return res.status(400).json({ erro: `Tipo invalido. Use: ${TIPOS_VALIDOS.join(", ")}` });
+      }
+      if (!dados || typeof dados !== "object") {
+        return res.status(400).json({ erro: "Campo 'dados' e obrigatorio e deve ser um objeto" });
+      }
+
+      console.log(`[ADMIN] Geracao manual: tipo=${tipo}`);
+      const resultado = await gerarDocumento(tipo, dados);
+
+      if (!resultado.sucesso) {
+        return res.status(500).json({ erro: resultado.erro || "Falha ao gerar documento" });
+      }
+
+      // Extrai a data da pasta onde o arquivo foi salvo para montar a URL de download
+      const partes = resultado.caminho.split(/[\\/]/);
+      const dataPasta = partes[partes.length - 2];
+      const secret = req.query.secret;
+      const url = `/admin/arquivo/${dataPasta}/${encodeURIComponent(resultado.nomeArquivo)}?secret=${encodeURIComponent(secret)}`;
+
+      return res.json({
+        sucesso: true,
+        tipo,
+        nomeArquivo: resultado.nomeArquivo,
+        url_download: url,
+      });
+    } catch (erro) {
+      console.error("[ADMIN] Erro em /admin/gerar:", erro.message);
+      return res.status(500).json({ erro: erro.message });
     }
   });
 

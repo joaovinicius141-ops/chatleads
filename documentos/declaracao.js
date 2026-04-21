@@ -6,44 +6,7 @@
 
 const fs = require("fs");
 const PDFDocument = require("pdfkit");
-const { dataPorExtenso } = require("./recibo");
-
-// Formata CPF: "09802058408" → "098.020.584-08"
-// Numeros com quantidade diferente de 11 digitos sao retornados sem alteracao.
-function formatarCPF(cpf) {
-  const digits = String(cpf || "").replace(/\D/g, "");
-  if (digits.length !== 11) return cpf || "";
-  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
-}
-
-// ── Rodape legal em 8pt cinza na ultima pagina ─────────────────
-// Requer bufferPages:true no construtor do PDFDocument.
-// Usa switchToPage + margem temporaria zero para nao criar pagina extra.
-function adicionarRodape(doc) {
-  const range = doc.bufferedPageRange();
-  const ultimaPagina = range.start + range.count - 1;
-  doc.switchToPage(ultimaPagina);
-
-  const texto =
-    "AVISO LEGAL: Este documento foi gerado automaticamente pela plataforma Crie Seu Contrato " +
-    "com base nas informacoes fornecidas pelo usuario. O servico limita-se a automacao de redacao, " +
-    "nao constituindo assessoria ou consultoria juridica. A veracidade e a conferencia dos dados " +
-    "sao de inteira responsabilidade do declarante/contratante.";
-
-  const margemOriginal = doc.page.margins.bottom;
-  doc.page.margins.bottom = 0;
-
-  doc.fontSize(8)
-     .fillColor("#888888")
-     .text(texto, 70, doc.page.height - 30, {
-       width: doc.page.width - 140,
-       align: "center",
-       lineBreak: true,
-     });
-
-  doc.page.margins.bottom = margemOriginal;
-  doc.fillColor("#000000").fontSize(12); // restaura cor e fonte
-}
+const { formatarCpfCnpj, dataPorExtenso, adicionarRodape } = require("./utils");
 
 function gerarDeclaracao(dados, caminhoDestino) {
   return new Promise((resolve, reject) => {
@@ -76,7 +39,7 @@ function gerarDeclaracao(dados, caminhoDestino) {
         `profiss\u00e3o ${dados.profissao || "________________"}, ` +
         `inscrito(a) no RG sob o n\u00ba ${dados.rg || "________________"}` +
         `${dados.orgao_expedidor ? ` ${dados.orgao_expedidor}` : ""} ` +
-        `e no CPF sob o n\u00ba ${formatarCPF(dados.cpf) || "________________"}, ` +
+        `e no CPF sob o n\u00ba ${formatarCpfCnpj(dados.cpf) || "________________"}, ` +
         `DECLARO para os devidos fins de direito e sob as penas da lei, ` +
         `que resido e mantenho domic\u00edlio no endere\u00e7o abaixo:`;
       doc.text(corpo, { align: "justify", lineGap: 3 });
@@ -137,7 +100,7 @@ function gerarDeclaracao(dados, caminhoDestino) {
       doc.moveDown(0.4);
       doc.fontSize(11)
         .text(dados.nome || "________________", { align: "center" });
-      doc.text(`CPF: ${formatarCPF(dados.cpf) || ""}`, { align: "center" });
+      doc.text(`CPF: ${formatarCpfCnpj(dados.cpf) || ""}`, { align: "center" });
 
       // ── Linha inferior ──────────────────────────────────────
       doc.moveDown(1);

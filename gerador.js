@@ -15,7 +15,7 @@ const path = require("path");
 
 const { gerarRecibo } = require("./documentos/recibo");
 const { gerarDeclaracao } = require("./documentos/declaracao");
-const { salvarContrato } = require("./documentos/contrato");
+const { gerarContrato } = require("./documentos/contrato");
 const relatorios = require("./relatorios");
 
 const PASTA_SAIDA = path.join(__dirname, "documentos_gerados");
@@ -37,8 +37,8 @@ const GERADORES = {
     nomeCliente: (d) => d.nome || "cliente",
   },
   contrato: {
-    extensao: "json",
-    gerar: salvarContrato,
+    extensao: "pdf",
+    gerar: gerarContrato,
     nomeCliente: (d) => d.locatario || d.locador || "cliente",
   },
 };

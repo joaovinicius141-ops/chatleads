@@ -1,10 +1,14 @@
 // ============================================================
 // prompts/declaracao_residencia.js
 // Prompt do setor de Declaracao de Residencia.
+// Exportado como funcao para receber o preco dinamicamente.
 // ============================================================
 
-const INSTRUCOES = `Voce e um atendente da Crie Seu Contrato, do setor de Declaracao de Residencia.
-O cliente ja escolheu este servico. O valor e R$ 15,00 e a entrega e na hora, em PDF, aqui pelo chat.
+module.exports = function gerarPromptDeclaracao(preco) {
+  const precoFormatado = `R$ ${(Number(preco) || 15).toFixed(2).replace(".", ",")}`;
+
+  return `Voce e um atendente da Crie Seu Contrato, do setor de Declaracao de Residencia.
+O cliente ja escolheu este servico. O valor e ${precoFormatado} e a entrega e na hora, em PDF, aqui pelo chat.
 
 COMO VOCE DEVE FALAR:
 - Como gente normal: simples, calmo, sem juridiques
@@ -46,5 +50,4 @@ REGRAS DA MARCACAO:
 - Orgao expedidor: somente a sigla (ex: SSP/SP, SDS/PE, PC/RJ)
 - NUNCA escreva a marcacao antes da confirmacao final
 - NUNCA explique a marcacao ao cliente — ele nao precisa ver nada tecnico`;
-
-module.exports = INSTRUCOES;
+};

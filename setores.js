@@ -7,29 +7,38 @@
 // 2) Adicione uma entrada no array SETORES abaixo
 // 3) Crie o gerador do documento em documentos/nome.js (se necessario)
 // Nao precisa mexer em nenhum outro arquivo.
+//
+// Precos configurados via variaveis de ambiente (.env / Railway):
+//   PRECO_DECLARACAO  — default: 15
+//   PRECO_RECIBO      — default: 25
+//   PRECO_CONTRATO    — default: 50
 // ============================================================
+
+const PRECO_DECLARACAO = Number(process.env.PRECO_DECLARACAO) || 15;
+const PRECO_RECIBO     = Number(process.env.PRECO_RECIBO)     || 25;
+const PRECO_CONTRATO   = Number(process.env.PRECO_CONTRATO)   || 50;
 
 const SETORES = [
   {
     numero: 1,
     nome: "Declaracao de Residencia",
     tipo: "declaracao",
-    preco: 15.00,
-    prompt: require("./prompts/declaracao_residencia"),
+    preco: PRECO_DECLARACAO,
+    prompt: require("./prompts/declaracao_residencia")(PRECO_DECLARACAO),
   },
   {
     numero: 2,
     nome: "Recibo de Pagamento",
     tipo: "recibo",
-    preco: 25.00,
-    prompt: require("./prompts/recibo_pagamento"),
+    preco: PRECO_RECIBO,
+    prompt: require("./prompts/recibo_pagamento")(PRECO_RECIBO),
   },
   {
     numero: 3,
     nome: "Contrato de Aluguel",
     tipo: "contrato",
-    preco: 50.00,
-    prompt: require("./prompts/contrato_aluguel"),
+    preco: PRECO_CONTRATO,
+    prompt: require("./prompts/contrato_aluguel")(PRECO_CONTRATO),
   },
   {
     numero: 4,
@@ -68,4 +77,4 @@ function buscarSetor(entrada) {
   return SETORES.find((s) => s.numero === n) || null;
 }
 
-module.exports = { SETORES, textoMenu, buscarSetor };
+module.exports = { SETORES, textoMenu, buscarSetor, PRECO_DECLARACAO, PRECO_RECIBO, PRECO_CONTRATO };

@@ -1,10 +1,14 @@
 // ============================================================
 // prompts/contrato_aluguel.js
 // Prompt do setor de Contrato de Aluguel.
+// Exportado como funcao para receber o preco dinamicamente.
 // ============================================================
 
-const INSTRUCOES = `Voce e um atendente da Crie Seu Contrato, do setor de Contrato de Aluguel.
-O cliente ja escolheu este servico. O valor e R$ 50,00. Apos o pagamento, nossa equipe prepara o contrato e entrega aqui pelo chat em ate 24h.
+module.exports = function gerarPromptContrato(preco) {
+  const precoFormatado = `R$ ${(Number(preco) || 50).toFixed(2).replace(".", ",")}`;
+
+  return `Voce e um atendente da Crie Seu Contrato, do setor de Contrato de Aluguel.
+O cliente ja escolheu este servico. O valor e ${precoFormatado}. Apos o pagamento, nossa equipe prepara o contrato e entrega aqui pelo chat em ate 24h.
 
 COMO VOCE DEVE FALAR:
 - Como gente normal: simples, calmo, sem juridiques
@@ -53,5 +57,4 @@ REGRAS DA MARCACAO:
 - Orgao expedidor: apenas a sigla (ex: SSP/SP, SDS/PE, PC/RJ)
 - NUNCA escreva a marcacao antes da confirmacao final
 - NUNCA explique a marcacao ao cliente`;
-
-module.exports = INSTRUCOES;
+};

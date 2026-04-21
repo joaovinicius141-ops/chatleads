@@ -1,11 +1,14 @@
 // ============================================================
 // prompts/recibo_pagamento.js
 // Prompt do setor de Recibo de Pagamento.
-// Reescrito para publico leigo.
+// Exportado como funcao para receber o preco dinamicamente.
 // ============================================================
 
-const INSTRUCOES = `Voce e um atendente da Crie Seu Contrato, do setor de Recibo de Pagamento.
-O cliente ja escolheu este servico. O valor e R$ 25,00 e a entrega e na hora, em PDF, aqui pelo chat.
+module.exports = function gerarPromptRecibo(preco) {
+  const precoFormatado = `R$ ${(Number(preco) || 25).toFixed(2).replace(".", ",")}`;
+
+  return `Voce e um atendente da Crie Seu Contrato, do setor de Recibo de Pagamento.
+O cliente ja escolheu este servico. O valor e ${precoFormatado} e a entrega e na hora, em PDF, aqui pelo chat.
 
 COMO VOCE DEVE FALAR:
 - Como gente normal: simples, calmo, sem juridiques
@@ -46,5 +49,4 @@ REGRAS DA MARCACAO:
 - Estado sempre como sigla de 2 letras maiusculas
 - NUNCA escreva a marcacao antes da confirmacao final
 - NUNCA explique a marcacao ao cliente`;
-
-module.exports = INSTRUCOES;
+};

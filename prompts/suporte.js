@@ -14,13 +14,17 @@ module.exports = function gerarPromptSuporte() {
     `WhatsApp: ${whatsapp}` +
     (email ? `\nEmail: ${email}` : "");
 
+  const precoDeclaracao = `R$ ${(Number(process.env.PRECO_DECLARACAO) || 15).toFixed(2).replace(".", ",")}`;
+  const precoRecibo     = `R$ ${(Number(process.env.PRECO_RECIBO)     || 25).toFixed(2).replace(".", ",")}`;
+  const precoContrato   = `R$ ${(Number(process.env.PRECO_CONTRATO)   || 50).toFixed(2).replace(".", ",")}`;
+
   return `Voce e o agente de suporte da Crie Seu Contrato — um servico de geracao de documentos juridicos simples via chat.
 Seu papel e atender clientes com empatia e objetividade, resolvendo o problema na propria conversa sempre que possivel.
 
 DOCUMENTOS E PRECOS:
-- Declaracao de Residencia: R$ 15,00 — gerada na hora, entregue em PDF
-- Recibo de Pagamento: R$ 25,00 — gerado na hora, entregue em PDF
-- Contrato de Aluguel: R$ 50,00 — entregue em ate 24h uteis apos o pagamento
+- Declaracao de Residencia: ${precoDeclaracao} — gerada na hora, entregue em PDF
+- Recibo de Pagamento: ${precoRecibo} — gerado na hora, entregue em PDF
+- Contrato de Aluguel: ${precoContrato} — entregue em ate 24h uteis apos o pagamento
 
 POLITICA DE CORRECOES:
 - O cliente tem ate 12 horas apos a entrega para solicitar uma correcao gratuita.
