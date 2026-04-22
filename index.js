@@ -571,17 +571,6 @@ async function entregarDocumento(pedido) {
   const canal = canaisAtivos[pedido.canalNome] || messenger;
   console.log(`[ENTREGA] tipo=${pedido.tipo} ${canal.nome}:${pedido.userId}`);
 
-  if (pedido.tipo === "contrato") {
-    await gerarDocumento("contrato", pedido.dados);
-    await canal.enviarTexto(
-      pedido.userId,
-      "Pagamento confirmado! Contrato registrado com sucesso.\n" +
-      "Este documento e personalizado e sera entregue em ate 24h uteis apos o pagamento.\n\n" +
-      linhaContato()
-    );
-    return;
-  }
-
   const resultado = await gerarDocumento(pedido.tipo, pedido.dados);
 
   if (!resultado.sucesso) {
@@ -800,7 +789,20 @@ function complementoPromptEstado(dadosColetados, setor) {
   if (dadosColetados && Object.keys(dadosColetados).length > 0) {
     sufixo += `\n\n---\nDADOS JA COLETADOS NESTA CONVERSA (nao pergunte de novo, nao duvide):\n${JSON.stringify(dadosColetados, null, 2)}`;
   }
-  sufixo += `\n\n---\nSEMPRE que o cliente fornecer um ou mais dados nesta mensagem, inclua ao FINAL da sua resposta (sera removido antes de chegar ao cliente) a linha:\n[PROGRESSO:{"campo":"valor"}]\nUse os nomes EXATOS de campo da marcacao [DADOS_COMPLETOS]. Inclua apenas os campos novos desta mensagem. Se nada novo foi fornecido, omita o [PROGRESSO].`;
+  sufixo += `\n\n---\nINSTRUCAO INTERNA (nao repassar ao cliente):
+Sempre que o cliente fornecer dados nesta mensagem, inclua ao FINAL da sua resposta uma linha [PROGRESSO:{...}] com os campos novos. Isso sera removido antes de chegar ao cliente.
+
+Exemplo real: se o cliente disse "Maria Silva" quando voce perguntou o nome do locador, emita:
+[PROGRESSO:{"locador_nome":"Maria Silva"}]
+
+Outro exemplo: se o cliente mandou nome e CPF juntos, emita:
+[PROGRESSO:{"locador_nome":"Maria Silva","locador_cpf":"12345678900"}]
+
+REGRAS:
+- Use os nomes EXATOS dos campos da marcacao [DADOS_COMPLETOS] acima (locador_nome, locador_nacionalidade, locatario_rg, imovel_endereco, valor_aluguel, etc.)
+- NUNCA use a palavra literal "campo" ou "valor" — use sempre o nome real do campo
+- Inclua somente os campos NOVOS fornecidos nesta mensagem (nao repita os ja coletados)
+- Se o cliente nao forneceu nenhum dado novo, nao emita a linha [PROGRESSO]`;
   return sufixo;
 }
 
