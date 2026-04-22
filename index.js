@@ -112,7 +112,7 @@ function getSessao(canal, userId) {
       };
     } else {
       // Nova sessao comeca com boas-vindas
-      s = { estado: "boas_vindas", setor: null, historico: [], atualizadoEm: Date.now() };
+      s = { estado: "boas_vindas", setor: null, historico: [], dadosColetados: {}, atualizadoEm: Date.now() };
     }
     sessoes.set(chave, s);
   } else {
@@ -125,7 +125,7 @@ function getSessao(canal, userId) {
 
 function resetarSessao(canal, userId) {
   sessoes.set(chaveSessao(canal, userId), {
-    estado: "menu", setor: null, historico: [], atualizadoEm: Date.now(),
+    estado: "menu", setor: null, historico: [], dadosColetados: {}, atualizadoEm: Date.now(),
   });
 }
 
@@ -177,14 +177,44 @@ if (whatsapp.ativo()) canaisAtivos.whatsapp = whatsapp;
 // corrompem o historico e fazem o bot repetir perguntas.
 const filasSessao = new Map();
 
+// ─── DEBOUNCE DE MENSAGENS ────────────────────────────────────
+// Agrupa mensagens consecutivas do mesmo usuario em uma unica chamada
+// Gemini. Evita 3-4 calls paralelas quando o cliente manda "Nome\nCPF\nRG"
+// em mensagens separadas dentro de poucos segundos.
+const bufferMensagens = new Map();
+const DEBOUNCE_MS = 3500;
+
 function enfileirarMensagem(userId, texto, canal) {
   const chave = chaveSessao(canal, userId);
+  let buffer = bufferMensagens.get(chave);
+
+  if (buffer) {
+    buffer.textos.push(texto);
+    clearTimeout(buffer.timer);
+  } else {
+    buffer = { textos: [texto], canal, userId };
+    bufferMensagens.set(chave, buffer);
+  }
+
+  buffer.timer = setTimeout(() => flushBuffer(chave), DEBOUNCE_MS);
+}
+
+function flushBuffer(chave) {
+  const buffer = bufferMensagens.get(chave);
+  if (!buffer) return;
+  bufferMensagens.delete(chave);
+
+  const { userId, canal, textos } = buffer;
+  const textoCombinado = textos.join("\n");
+  if (textos.length > 1) {
+    console.log(`[DEBOUNCE] ${canal.nome}:${userId} agrupou ${textos.length} mensagens`);
+  }
+
   const ultimo = filasSessao.get(chave) || Promise.resolve();
   const proximo = ultimo
     .catch(() => {}) // erro na msg anterior nao trava a fila
-    .then(() => processarComTimeout(userId, texto, canal));
+    .then(() => processarComTimeout(userId, textoCombinado, canal));
   filasSessao.set(chave, proximo);
-  // Limpa entrada da fila quando nao houver mais mensagens pendentes
   proximo.finally(() => {
     if (filasSessao.get(chave) === proximo) filasSessao.delete(chave);
   });
@@ -337,7 +367,13 @@ async function processarMensagem(userId, texto, canal) {
       );
     }
 
-    const respostaIA = await chamarGemini(sessao.historico, sessao.setor.prompt);
+    const promptEfetivo = sessao.setor.prompt + complementoPromptEstado(sessao.dadosColetados, sessao.setor);
+    let respostaIA = await chamarGemini(sessao.historico, promptEfetivo);
+    const progresso = extrairProgresso(respostaIA);
+    if (progresso.dados) {
+      sessao.dadosColetados = { ...sessao.dadosColetados, ...progresso.dados };
+    }
+    respostaIA = progresso.respostaLimpa;
     sessao.historico.push({ role: "model", parts: [{ text: respostaIA }] });
     await canal.enviarTexto(userId, respostaIA);
     return;
@@ -389,6 +425,7 @@ async function processarMensagem(userId, texto, canal) {
     // Salva setor e solicita aceite LGPD antes de coletar dados
     sessao.setor = setor;
     sessao.historico = [];
+    sessao.dadosColetados = {};
     sessao.estado = "lgpd_aguardando";
     console.log(`[TRIAGEM] ${canal.nome}:${userId} escolheu setor: ${setor.nome}`);
 
@@ -424,13 +461,23 @@ async function processarMensagem(userId, texto, canal) {
 
     let respostaIA = "";
     try {
-      respostaIA = await chamarGemini(sessao.historico, sessao.setor.prompt);
+      const promptEfetivo = sessao.setor.prompt + complementoPromptEstado(sessao.dadosColetados, sessao.setor);
+      respostaIA = await chamarGemini(sessao.historico, promptEfetivo);
     } catch (err) {
       console.error("Erro Gemini:", err.message);
       sessao.historico.pop();
       await canal.enviarTexto(userId, "Desculpe, tive um problema. Pode repetir?");
       return;
     }
+
+    // Extrai [PROGRESSO:{...}] do Gemini e acumula no state tracker.
+    // Remove o marcador da resposta antes de enviar ao cliente.
+    const progresso = extrairProgresso(respostaIA);
+    if (progresso.dados) {
+      sessao.dadosColetados = { ...sessao.dadosColetados, ...progresso.dados };
+      console.log(`[PROGRESSO] ${canal.nome}:${userId} — ${Object.keys(progresso.dados).join(", ")}`);
+    }
+    respostaIA = progresso.respostaLimpa;
 
     // Suporte: verifica se Gemini quer encaminhar para suporte humano
     if (respostaIA.includes("[ENCAMINHAR_PEDRO]")) {
@@ -717,6 +764,46 @@ async function enviarContatoPedro(userId, canal) {
 }
 
 // ─── DETECTA [DADOS_COMPLETOS:{...}] ──────────────────────────
+// Extrai [PROGRESSO:{...}] emitido pelo Gemini a cada turno.
+// Retorna { dados, respostaLimpa } — respostaLimpa sem o marcador.
+function extrairProgresso(texto) {
+  if (!texto) return { dados: null, respostaLimpa: texto };
+  const idx = texto.indexOf("[PROGRESSO:");
+  if (idx === -1) return { dados: null, respostaLimpa: texto };
+  const inicio = texto.indexOf("{", idx);
+  if (inicio === -1) return { dados: null, respostaLimpa: texto };
+  let nivel = 0, fim = -1;
+  for (let i = inicio; i < texto.length; i++) {
+    if (texto[i] === "{") nivel++;
+    else if (texto[i] === "}") { nivel--; if (nivel === 0) { fim = i; break; } }
+  }
+  if (fim === -1) return { dados: null, respostaLimpa: texto };
+  // Avanca ate o `]` final da marcacao
+  let finalMarcador = fim + 1;
+  while (finalMarcador < texto.length && texto[finalMarcador] !== "]") finalMarcador++;
+  if (texto[finalMarcador] === "]") finalMarcador++;
+  try {
+    const obj = JSON.parse(texto.slice(inicio, fim + 1));
+    const respostaLimpa = (texto.slice(0, idx) + texto.slice(finalMarcador)).trim();
+    return { dados: obj, respostaLimpa };
+  } catch (e) {
+    console.error("[PROGRESSO] JSON invalido:", e.message);
+    return { dados: null, respostaLimpa: texto };
+  }
+}
+
+// Monta instrucao suplementar para o prompt — injeta dados ja coletados
+// e pede que o Gemini emita [PROGRESSO:{...}] a cada novo dado recebido.
+function complementoPromptEstado(dadosColetados, setor) {
+  if (!setor || setor.tipo === "suporte") return "";
+  let sufixo = "";
+  if (dadosColetados && Object.keys(dadosColetados).length > 0) {
+    sufixo += `\n\n---\nDADOS JA COLETADOS NESTA CONVERSA (nao pergunte de novo, nao duvide):\n${JSON.stringify(dadosColetados, null, 2)}`;
+  }
+  sufixo += `\n\n---\nSEMPRE que o cliente fornecer um ou mais dados nesta mensagem, inclua ao FINAL da sua resposta (sera removido antes de chegar ao cliente) a linha:\n[PROGRESSO:{"campo":"valor"}]\nUse os nomes EXATOS de campo da marcacao [DADOS_COMPLETOS]. Inclua apenas os campos novos desta mensagem. Se nada novo foi fornecido, omita o [PROGRESSO].`;
+  return sufixo;
+}
+
 function extrairMarcacao(texto) {
   if (!texto) return null;
   const idx = texto.indexOf("[DADOS_COMPLETOS:");
