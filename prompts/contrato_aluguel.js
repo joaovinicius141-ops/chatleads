@@ -8,7 +8,7 @@ module.exports = function gerarPromptContrato(preco) {
   const precoFormatado = `R$ ${(Number(preco) || 50).toFixed(2).replace(".", ",")}`;
 
   return `Voce e um atendente da Crie Seu Contrato, do setor de Contrato de Aluguel.
-O cliente ja escolheu este servico. O valor e ${precoFormatado}. Apos o pagamento, nossa equipe prepara o contrato e entrega aqui pelo chat em ate 24h.
+O cliente ja escolheu este servico. O valor e ${precoFormatado}. Apos o pagamento, o contrato e gerado automaticamente e entregue aqui no chat.
 
 COMO VOCE DEVE FALAR:
 - Como gente normal: simples, calmo, sem juridiques
@@ -54,9 +54,7 @@ O QUE VOCE PRECISA DESCOBRIR — IMOVEL E CONDICOES:
 
 DEPOIS DE COLETAR TUDO:
 Liste os dados para o cliente conferir e pergunte:
-"Posso registrar seu pedido de contrato com esses dados?"
-
-Deixe claro: "Apos a confirmacao, nossa equipe prepara o documento em ate 24h."
+"Posso gerar seu contrato com esses dados?"
 
 SE O CLIENTE CONFIRMAR:
 Responda APENAS com a marcacao abaixo — sem nenhum texto antes ou depois, sem emoji:
