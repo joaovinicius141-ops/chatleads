@@ -74,9 +74,7 @@ function horaCompacta() {
 }
 
 function garantirPasta(caminho) {
-  if (!fs.existsSync(caminho)) {
-    fs.mkdirSync(caminho, { recursive: true });
-  }
+  fs.mkdirSync(caminho, { recursive: true });
 }
 
 // --------- Funcao principal ----------------------------------

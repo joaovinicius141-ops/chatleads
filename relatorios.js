@@ -9,13 +9,6 @@ const path = require("path");
 
 const PASTA_RELATORIOS = path.join(__dirname, "relatorios");
 
-// Garante que a pasta de relatorios existe
-function garantirPasta() {
-  if (!fs.existsSync(PASTA_RELATORIOS)) {
-    fs.mkdirSync(PASTA_RELATORIOS, { recursive: true });
-  }
-}
-
 // Retorna data no formato YYYY-MM-DD
 function dataHoje() {
   const d = new Date();
@@ -57,7 +50,8 @@ const CABECALHO_CSV = linhaCSV([
 // registro = { tipo, cliente, status, arquivo }
 function registrar(registro) {
   try {
-    garantirPasta();
+    // mkdirSync com recursive e idempotente — sem existsSync necessario
+    fs.mkdirSync(PASTA_RELATORIOS, { recursive: true });
 
     const hoje = dataHoje();
     const hora = horaAgora();
@@ -71,55 +65,24 @@ function registrar(registro) {
       arquivo: registro.arquivo || "",
     };
 
-    // 1) JSON diario
-    const jsonPath = path.join(PASTA_RELATORIOS, `relatorio_${hoje}.json`);
-    let lista = [];
-    if (fs.existsSync(jsonPath)) {
-      try {
-        lista = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
-        if (!Array.isArray(lista)) lista = [];
-      } catch (e) {
-        lista = [];
-      }
-    }
-    lista.push(evento);
-    fs.writeFileSync(jsonPath, JSON.stringify(lista, null, 2), "utf8");
+    const linha = linhaCSV([
+      evento.data, evento.hora, evento.tipo,
+      evento.cliente, evento.status, evento.arquivo,
+    ]) + "\n";
+
+    // 1) NDJSON diario (append-only — sem race condition de read-modify-write)
+    const ndjsonPath = path.join(PASTA_RELATORIOS, `relatorio_${hoje}.ndjson`);
+    fs.appendFileSync(ndjsonPath, JSON.stringify(evento) + "\n", "utf8");
 
     // 2) CSV diario
     const csvPath = path.join(PASTA_RELATORIOS, `relatorio_${hoje}.csv`);
-    if (!fs.existsSync(csvPath)) {
-      fs.writeFileSync(csvPath, CABECALHO_CSV + "\n", "utf8");
-    }
-    fs.appendFileSync(
-      csvPath,
-      linhaCSV([
-        evento.data,
-        evento.hora,
-        evento.tipo,
-        evento.cliente,
-        evento.status,
-        evento.arquivo,
-      ]) + "\n",
-      "utf8"
-    );
+    if (!fs.existsSync(csvPath)) fs.writeFileSync(csvPath, CABECALHO_CSV + "\n", "utf8");
+    fs.appendFileSync(csvPath, linha, "utf8");
 
-    // 3) CSV geral acumulado
+    // 3) CSV geral acumulado (lido pelo admin /stats e /dashboard)
     const geralPath = path.join(PASTA_RELATORIOS, "relatorio_geral.csv");
-    if (!fs.existsSync(geralPath)) {
-      fs.writeFileSync(geralPath, CABECALHO_CSV + "\n", "utf8");
-    }
-    fs.appendFileSync(
-      geralPath,
-      linhaCSV([
-        evento.data,
-        evento.hora,
-        evento.tipo,
-        evento.cliente,
-        evento.status,
-        evento.arquivo,
-      ]) + "\n",
-      "utf8"
-    );
+    if (!fs.existsSync(geralPath)) fs.writeFileSync(geralPath, CABECALHO_CSV + "\n", "utf8");
+    fs.appendFileSync(geralPath, linha, "utf8");
 
     console.log(
       `[RELATORIO] ${evento.data} ${evento.hora} | ${evento.tipo} | ${evento.cliente} | ${evento.status}`
