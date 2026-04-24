@@ -1,5 +1,5 @@
 // ============================================================
-// index.js — v2.1.0
+// index.js
 // Servidor Express — triagem por menu + Gemini por setor + PIX + PDF
 //
 // Arquitetura multi-canal:
