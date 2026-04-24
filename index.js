@@ -19,17 +19,18 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const crypto = require("crypto");
+const fs = require("fs");
 const path = require("path");
 const https = require("https");
 
 // Agente HTTPS reutilizado para chamadas ao Gemini.
 // Evita o MaxListenersExceededWarning causado por muitos listeners TLS
 // quando cada chamada cria sua propria conexao.
-const geminiHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 10 });
+const geminiHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 
 const { gerarDocumento } = require("./gerador");
 const { criarCobrancaPix, verificarPagamento } = require("./pagamento");
-const { textoMenu, buscarSetor, PRECO_DECLARACAO, PRECO_RECIBO, PRECO_CONTRATO } = require("./setores");
+const { textoMenu, buscarSetor, PRECO_DECLARACAO, PRECO_RECIBO, PRECO_CONTRATO, temDadosMinimos, aplicarDefaults } = require("./setores");
 const { linhaContato, nomeSuporte } = require("./contato");
 
 const messenger = require("./canais/messenger");
@@ -295,16 +296,16 @@ async function processarComTimeout(userId, texto, canal) {
     }
   }, 5000);
 
-  const timer60s = setTimeout(() => {
+  const timer5min = setTimeout(() => {
     if (!estado.concluido) {
       estado.fallback60Enviado = true;
-      console.warn(`[TIMEOUT] 60s sem resposta para ${canal.nome}:${userId}`);
+      console.warn(`[TIMEOUT] 5min sem resposta para ${canal.nome}:${userId}`);
       canal.enviarTexto(
         userId,
         "Desculpe a demora! Estamos com uma instabilidade no momento.\n\n" + linhaContato()
       ).catch(() => {});
     }
-  }, 60000);
+  }, 5 * 60 * 1000);
 
   try {
     await processarMensagem(userId, texto, canal);
@@ -319,7 +320,7 @@ async function processarComTimeout(userId, texto, canal) {
   } finally {
     estado.concluido = true;
     clearTimeout(timer5s);
-    clearTimeout(timer60s);
+    clearTimeout(timer5min);
   }
 }
 
@@ -466,7 +467,47 @@ async function processarMensagem(userId, texto, canal) {
     } catch (err) {
       console.error("Erro Gemini:", err.message);
       sessao.historico.pop();
-      await canal.enviarTexto(userId, "Desculpe, tive um problema. Pode repetir?");
+
+      // ── Fallback: Gemini indisponivel mas temos os dados minimos ──
+      // Quando Gemini cai no final do fluxo (apos cliente fornecer tudo),
+      // geramos o documento direto com os dados ja coletados via [PROGRESSO].
+      const setorAtual = sessao.setor;
+      if (
+        setorAtual && setorAtual.tipo !== "suporte" &&
+        temDadosMinimos(setorAtual.tipo, sessao.dadosColetados)
+      ) {
+        console.warn(
+          `[FALLBACK] Gemini indisponivel — gerando ${setorAtual.tipo} com dados coletados para ${canal.nome}:${userId}`
+        );
+        const dadosFallback = aplicarDefaults(setorAtual.tipo, sessao.dadosColetados);
+        resetarSessao(canal, userId);
+
+        if (MODO_TESTE) {
+          await canal.enviarTexto(
+            userId,
+            "Estamos com uma instabilidade no atendimento, mas ja tenho todos os seus dados. " +
+            "Vou gerar seu documento agora mesmo!"
+          );
+          await entregarDocumento({
+            userId, canalNome: canal.nome,
+            tipo: setorAtual.tipo, dados: dadosFallback,
+          });
+        } else {
+          await canal.enviarTexto(
+            userId,
+            "Estamos com uma instabilidade no atendimento, mas ja tenho todos os seus dados. " +
+            "Vou gerar o PIX para finalizar!"
+          );
+          await processarPagamento(userId, setorAtual, dadosFallback, canal);
+        }
+        return;
+      }
+
+      // Sem dados suficientes — pede para o cliente repetir
+      await canal.enviarTexto(
+        userId,
+        "Desculpe, tive uma instabilidade agora. Pode repetir sua ultima mensagem?"
+      );
       return;
     }
 
@@ -834,37 +875,61 @@ const GEMINI_PRECO_ENTRADA = 0.075;  // input
 const GEMINI_PRECO_SAIDA   = 0.300;  // output
 const GEMINI_USO_PATH = path.join(__dirname, "relatorios", "gemini_uso.json");
 
+// Acumulador em memoria — atualizado de forma sincrona (sem I/O no caminho critico).
+// Carregado do disco na inicializacao e persistido de forma assincrona a cada 30s.
+let geminiUso = {
+  total_chamadas: 0, total_tokens_entrada: 0, total_tokens_saida: 0,
+  custo_estimado_usd: 0, por_dia: {},
+};
+let geminiUsoSujo = false;
+
+fs.promises.readFile(GEMINI_USO_PATH, "utf8")
+  .then((conteudo) => {
+    try {
+      const dados = JSON.parse(conteudo);
+      if (dados && typeof dados === "object") geminiUso = dados;
+    } catch (_) {}
+  })
+  .catch(() => {}); // arquivo pode nao existir na primeira execucao
+
 function registrarUsoGemini(inputTokens, outputTokens) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const custoUsd =
+    (inputTokens  / 1_000_000) * GEMINI_PRECO_ENTRADA +
+    (outputTokens / 1_000_000) * GEMINI_PRECO_SAIDA;
+
+  geminiUso.total_chamadas++;
+  geminiUso.total_tokens_entrada += inputTokens;
+  geminiUso.total_tokens_saida   += outputTokens;
+  geminiUso.custo_estimado_usd    = parseFloat((geminiUso.custo_estimado_usd + custoUsd).toFixed(6));
+
+  if (!geminiUso.por_dia[hoje])
+    geminiUso.por_dia[hoje] = { chamadas: 0, tokens_entrada: 0, tokens_saida: 0, custo_usd: 0 };
+  geminiUso.por_dia[hoje].chamadas++;
+  geminiUso.por_dia[hoje].tokens_entrada += inputTokens;
+  geminiUso.por_dia[hoje].tokens_saida   += outputTokens;
+  geminiUso.por_dia[hoje].custo_usd       = parseFloat((geminiUso.por_dia[hoje].custo_usd + custoUsd).toFixed(6));
+
+  geminiUsoSujo = true;
+}
+
+// Persiste em disco de forma assincrona — sem bloquear o event loop.
+async function flushGeminiUso() {
+  if (!geminiUsoSujo) return;
+  geminiUsoSujo = false;
   try {
-    // Garante que o diretorio existe (Railway nao cria dirs automaticamente)
-    require("fs").mkdirSync(path.dirname(GEMINI_USO_PATH), { recursive: true });
-
-    const hoje = new Date().toISOString().slice(0, 10);
-    const custoUsd =
-      (inputTokens  / 1_000_000) * GEMINI_PRECO_ENTRADA +
-      (outputTokens / 1_000_000) * GEMINI_PRECO_SAIDA;
-
-    let dados = { total_chamadas: 0, total_tokens_entrada: 0, total_tokens_saida: 0, custo_estimado_usd: 0, por_dia: {} };
-    if (require("fs").existsSync(GEMINI_USO_PATH)) {
-      try { dados = JSON.parse(require("fs").readFileSync(GEMINI_USO_PATH, "utf8")); } catch (_) {}
-    }
-
-    dados.total_chamadas++;
-    dados.total_tokens_entrada += inputTokens;
-    dados.total_tokens_saida   += outputTokens;
-    dados.custo_estimado_usd    = parseFloat((dados.custo_estimado_usd + custoUsd).toFixed(6));
-
-    if (!dados.por_dia[hoje]) dados.por_dia[hoje] = { chamadas: 0, tokens_entrada: 0, tokens_saida: 0, custo_usd: 0 };
-    dados.por_dia[hoje].chamadas++;
-    dados.por_dia[hoje].tokens_entrada += inputTokens;
-    dados.por_dia[hoje].tokens_saida   += outputTokens;
-    dados.por_dia[hoje].custo_usd       = parseFloat((dados.por_dia[hoje].custo_usd + custoUsd).toFixed(6));
-
-    require("fs").writeFileSync(GEMINI_USO_PATH, JSON.stringify(dados, null, 2), "utf8");
+    await fs.promises.mkdir(path.dirname(GEMINI_USO_PATH), { recursive: true });
+    await fs.promises.writeFile(GEMINI_USO_PATH, JSON.stringify(geminiUso, null, 2), "utf8");
   } catch (e) {
-    console.error("[GEMINI] Falha ao registrar uso:", e.message);
+    geminiUsoSujo = true; // tenta de novo no proximo ciclo
+    console.error("[GEMINI] Falha ao persistir uso:", e.message);
   }
 }
+
+// Flush a cada 30s e no encerramento do processo
+setInterval(flushGeminiUso, 30_000).unref();
+process.on("SIGTERM", () => flushGeminiUso().finally(() => process.exit(0)));
+process.on("SIGINT",  () => flushGeminiUso().finally(() => process.exit(0)));
 
 // ─── CHAMA O GEMINI ───────────────────────────────────────────
 async function chamarGemini(historico, promptSetor, tentativa = 1) {
@@ -898,9 +963,10 @@ async function chamarGemini(historico, promptSetor, tentativa = 1) {
     const status = err.response && err.response.status;
     const detalhe = err.response && JSON.stringify(err.response.data);
     console.error(`[GEMINI] Erro ${status} | detalhe: ${detalhe}`);
-    if ((status === 429 || status === 503) && tentativa <= 3) {
-      const esperas = [5000, 15000, 30000];
-      console.warn(`[GEMINI] Tentativa ${tentativa}/3. Aguardando ${esperas[tentativa - 1] / 1000}s...`);
+    if ((status === 429 || status === 503) && tentativa <= 5) {
+      // Esperas: 5s, 15s, 30s, 60s, 90s — total ~3.3min (cabe no timeout de 5min)
+      const esperas = [5000, 15000, 30000, 60000, 90000];
+      console.warn(`[GEMINI] Tentativa ${tentativa}/5. Aguardando ${esperas[tentativa - 1] / 1000}s...`);
       await new Promise((r) => setTimeout(r, esperas[tentativa - 1]));
       return chamarGemini(historico, promptSetor, tentativa + 1);
     }
