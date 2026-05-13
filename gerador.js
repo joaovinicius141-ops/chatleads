@@ -15,6 +15,7 @@ const path = require("path");
 
 const { gerarRecibo } = require("./documentos/recibo");
 const { gerarDeclaracao } = require("./documentos/declaracao");
+const { gerarDeclaracaoDono } = require("./documentos/declaracao_dono");
 const { gerarContrato } = require("./documentos/contrato");
 const relatorios = require("./relatorios");
 
@@ -35,6 +36,11 @@ const GERADORES = {
     extensao: "pdf",
     gerar: gerarDeclaracao,
     nomeCliente: (d) => d.nome || "cliente",
+  },
+  declaracao_dono: {
+    extensao: "pdf",
+    gerar: gerarDeclaracaoDono,
+    nomeCliente: (d) => d.proprietario_nome || d.residente_nome || "cliente",
   },
   contrato: {
     extensao: "pdf",

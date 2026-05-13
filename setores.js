@@ -16,9 +16,10 @@
 
 const { getConfig } = require("./config-manager");
 
-const PRECO_DECLARACAO = Number(process.env.PRECO_DECLARACAO) || 15;
-const PRECO_RECIBO     = Number(process.env.PRECO_RECIBO)     || 25;
-const PRECO_CONTRATO   = Number(process.env.PRECO_CONTRATO)   || 50;
+const PRECO_DECLARACAO      = Number(process.env.PRECO_DECLARACAO)      || 15;
+const PRECO_DECLARACAO_DONO = Number(process.env.PRECO_DECLARACAO_DONO) || 15;
+const PRECO_RECIBO          = Number(process.env.PRECO_RECIBO)          || 25;
+const PRECO_CONTRATO        = Number(process.env.PRECO_CONTRATO)        || 50;
 
 const SETORES = [
   {
@@ -44,6 +45,13 @@ const SETORES = [
   },
   {
     numero: 4,
+    nome: "Declaracao de Residencia do Proprietario",
+    tipo: "declaracao_dono",
+    preco: PRECO_DECLARACAO_DONO,
+    prompt: require("./prompts/declaracao_dono")(PRECO_DECLARACAO_DONO),
+  },
+  {
+    numero: 5,
     nome: "Suporte",
     tipo: "suporte",
     preco: 0,
@@ -92,6 +100,11 @@ function buscarSetor(entrada) {
 // com os dados coletados e defaults para o restante.
 const CAMPOS_MINIMOS = {
   declaracao: ["nome", "cpf", "endereco", "cidade", "estado"],
+  declaracao_dono: [
+    "proprietario_nome", "proprietario_cpf",
+    "residente_nome", "residente_cpf",
+    "imovel_endereco", "imovel_cidade", "imovel_uf",
+  ],
   recibo:     ["pagador", "recebedor", "valor", "descricao"],
   contrato:   [
     "locador_nome", "locador_cpf",
@@ -113,6 +126,15 @@ function aplicarDefaults(tipo, dados) {
     if (!out.rg) out.rg = "";
     if (!out.orgao_expedidor) out.orgao_expedidor = "";
     if (!out.cep) out.cep = "";
+  } else if (tipo === "declaracao_dono") {
+    if (!out.data) out.data = hoje;
+    if (!out.proprietario_nacionalidade) out.proprietario_nacionalidade = "brasileiro(a)";
+    if (!out.proprietario_estado_civil) out.proprietario_estado_civil = "";
+    if (!out.proprietario_profissao) out.proprietario_profissao = "";
+    if (!out.proprietario_rg) out.proprietario_rg = "";
+    if (!out.proprietario_orgao_exp) out.proprietario_orgao_exp = "";
+    if (!out.imovel_bairro) out.imovel_bairro = "";
+    if (!out.imovel_cep) out.imovel_cep = "";
   } else if (tipo === "recibo") {
     if (!out.data) out.data = hoje;
     if (!out.cpf_pagador) out.cpf_pagador = "";
@@ -153,6 +175,6 @@ function temDadosMinimos(tipo, dados) {
 
 module.exports = {
   SETORES, textoMenu, buscarSetor,
-  PRECO_DECLARACAO, PRECO_RECIBO, PRECO_CONTRATO,
+  PRECO_DECLARACAO, PRECO_DECLARACAO_DONO, PRECO_RECIBO, PRECO_CONTRATO,
   CAMPOS_MINIMOS, aplicarDefaults, temDadosMinimos,
 };

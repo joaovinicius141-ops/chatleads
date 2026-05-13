@@ -30,7 +30,7 @@ const geminiHttpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 
 const { gerarDocumento } = require("./gerador");
 const { criarCobrancaPix, verificarPagamento } = require("./pagamento");
-const { textoMenu, buscarSetor, PRECO_DECLARACAO, PRECO_RECIBO, PRECO_CONTRATO, temDadosMinimos, aplicarDefaults } = require("./setores");
+const { SETORES, textoMenu, buscarSetor, PRECO_DECLARACAO, PRECO_RECIBO, PRECO_CONTRATO, temDadosMinimos, aplicarDefaults } = require("./setores");
 const { linhaContato, nomeSuporte } = require("./contato");
 
 const messenger = require("./canais/messenger");
@@ -337,6 +337,34 @@ function saudacao() {
   return "Boa noite";
 }
 
+// ─── DETECCAO DE TROCA DE DOCUMENTO ──────────────────────────
+// Verifica se o cliente quer mudar de tipo de documento no meio do atendimento.
+// Exige uma palavra de intencao clara + nome do documento diferente do atual.
+function detectarTrocaSetor(texto, setorAtual) {
+  const t = texto.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const INTENT = ["quero", "preciso", "mudar", "trocar", "prefiro", "fazer", "gerar", "outro"];
+  if (!INTENT.some((p) => t.includes(p))) return null;
+
+  const KEYWORDS = [
+    { tipo: "declaracao_dono", palavras: ["declaracao do dono", "declaracao de residencia do proprietario", "declaracao do proprietario", "declaracao para terceiro", "declaracao para outra pessoa"] },
+    { tipo: "declaracao",      palavras: ["declaracao de residencia", "declaracao"] },
+    { tipo: "recibo",          palavras: ["recibo de pagamento", "recibo"] },
+    { tipo: "contrato",        palavras: ["contrato de aluguel"] },
+  ];
+
+  for (const { tipo, palavras } of KEYWORDS) {
+    for (const palavra of palavras) {
+      if (t.includes(palavra)) {
+        if (!setorAtual || setorAtual.tipo !== tipo) {
+          return SETORES.find((s) => s.tipo === tipo) || null;
+        }
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
 // ─── FLUXO PRINCIPAL POR MENSAGEM ─────────────────────────────
 async function processarMensagem(userId, texto, canal) {
   const sessao = getSessao(canal, userId);
@@ -448,6 +476,24 @@ async function processarMensagem(userId, texto, canal) {
 
   if (sessao.estado === "atendimento") {
     const textoLimpo = String(texto).slice(0, 2000);
+
+    // Detecta pedido de troca de tipo de documento no meio do atendimento
+    const novoSetor = detectarTrocaSetor(textoLimpo, sessao.setor);
+    if (novoSetor) {
+      console.log(`[TROCA_SETOR] ${canal.nome}:${userId} — ${sessao.setor?.tipo} → ${novoSetor.tipo}`);
+      sessao.setor = novoSetor;
+      sessao.historico = [];
+      sessao.dadosColetados = {};
+      const promptEfetivo = novoSetor.prompt + complementoPromptEstado({}, novoSetor);
+      let respostaIA = await chamarGemini([], promptEfetivo);
+      const progresso = extrairProgresso(respostaIA);
+      if (progresso.dados) sessao.dadosColetados = { ...progresso.dados };
+      respostaIA = progresso.respostaLimpa;
+      sessao.historico.push({ role: "model", parts: [{ text: respostaIA }] });
+      await canal.enviarTexto(userId, `Sem problema! Vou iniciar o atendimento para ${novoSetor.nome}.\n\n${respostaIA}`);
+      return;
+    }
+
     sessao.historico.push({ role: "user", parts: [{ text: textoLimpo }] });
 
     // Limita historico preservando ancora (primeiras 4 msgs) + 36 recentes
@@ -699,7 +745,9 @@ async function revisarDocumento(userId, reclamacao, entrega, canal) {
   try {
     const resposta = await chamarGemini(
       [{ role: "user", parts: [{ text: promptRevisao }] }],
-      "Voce e um revisor tecnico de documentos. Siga rigorosamente o formato de resposta solicitado."
+      "Voce e um revisor tecnico de documentos. Siga rigorosamente o formato de resposta solicitado.",
+      1,
+      { maxOutputTokens: 2048 }
     );
 
     // ── Caso A: sem erro — sessao permanece aberta ─────────────
@@ -774,13 +822,23 @@ function extrairCorrecao(resposta) {
     else if (resposta[i] === "}") { nivel--; if (nivel === 0) { fim = i; break; } }
   }
   if (fim === -1) return null;
+  const jsonStr = resposta.slice(inicio, fim + 1);
   try {
-    const obj = JSON.parse(resposta.slice(inicio, fim + 1));
+    const obj = JSON.parse(jsonStr);
     if (!obj.tipo || !obj.dados) return null;
     return obj;
   } catch (e) {
-    console.error("[REVISAO] JSON de correcao invalido:", e.message);
-    return null;
+    // Tenta limpar trailing commas antes de desistir
+    console.error("[REVISAO] JSON invalido, tentando limpar. Trecho:", jsonStr.slice(0, 300));
+    try {
+      const limpo = jsonStr.replace(/,\s*([\}\]])/g, "$1");
+      const obj = JSON.parse(limpo);
+      if (!obj.tipo || !obj.dados) return null;
+      return obj;
+    } catch (e2) {
+      console.error("[REVISAO] JSON de correcao invalido apos limpeza:", e2.message);
+      return null;
+    }
   }
 }
 
@@ -932,7 +990,7 @@ process.on("SIGTERM", () => flushGeminiUso().finally(() => process.exit(0)));
 process.on("SIGINT",  () => flushGeminiUso().finally(() => process.exit(0)));
 
 // ─── CHAMA O GEMINI ───────────────────────────────────────────
-async function chamarGemini(historico, promptSetor, tentativa = 1) {
+async function chamarGemini(historico, promptSetor, tentativa = 1, opcoes = {}) {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY nao configurada");
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
@@ -947,7 +1005,7 @@ async function chamarGemini(historico, promptSetor, tentativa = 1) {
       {
         system_instruction: { parts: [{ text: promptSetor }] },
         contents,
-        generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
+        generationConfig: { temperature: 0.7, maxOutputTokens: opcoes.maxOutputTokens || 1024 },
       },
       { timeout: 30000, httpsAgent: geminiHttpsAgent }
     );
